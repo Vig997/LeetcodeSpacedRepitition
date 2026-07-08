@@ -5,6 +5,7 @@ interface Props {
   assignments: AssignmentWithProblem[]
   onCheck: (a: AssignmentWithProblem) => void
   onAddExtra?: () => void
+  onRemoveExtra?: (a: AssignmentWithProblem) => void
   canAddExtra?: boolean
 }
 
@@ -12,6 +13,7 @@ export default function TodayReviewsList({
   assignments,
   onCheck,
   onAddExtra,
+  onRemoveExtra,
   canAddExtra = true,
 }: Props) {
   return (
@@ -56,9 +58,24 @@ export default function TodayReviewsList({
                     baseline
                   </span>
                 )}
+                {a.is_extra === 1 && (
+                  <span className="ml-2 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-400">
+                    extra
+                  </span>
+                )}
               </span>
               <DifficultyBadge difficulty={a.problem.difficulty} />
               <TopicBadge topic={a.problem.topic} />
+              {a.is_extra === 1 && a.checked === 0 && onRemoveExtra && (
+                <button
+                  type="button"
+                  onClick={() => onRemoveExtra(a)}
+                  className="rounded px-1.5 py-0.5 text-[10px] text-gray-500 transition hover:bg-gray-800 hover:text-red-300"
+                  title="Remove this extra review from Today"
+                >
+                  Remove
+                </button>
+              )}
               <OpenLink url={a.problem.url} />
             </li>
           ))}

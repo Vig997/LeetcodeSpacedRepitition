@@ -240,6 +240,20 @@ export function addExtraNew(): { ok: boolean; message: string } {
   return { ok: true, message: `Added ${pick.title}` }
 }
 
+/** Remove a same-day extra slot the user added (+ Extra review/new). Paced assignments cannot be removed. */
+export function removeExtraAssignment(assignmentId: number): { ok: boolean; message: string } {
+  const row = db
+    .prepare('SELECT * FROM today_assignments WHERE id = ? AND assignment_date = ?')
+    .get(assignmentId, todayStr()) as TodayAssignment | undefined
+
+  if (!row) return { ok: false, message: 'Not on Today anymore' }
+  if (row.is_extra !== 1) return { ok: false, message: 'Only extras you added can be removed' }
+  if (row.checked === 1) return { ok: false, message: 'Already completed — cannot remove' }
+
+  deleteAssignmentById.run(assignmentId)
+  return { ok: true, message: 'Removed from Today' }
+}
+
 export function getTodayAssignments(): AssignmentWithProblem[] {
   const rows = db
     .prepare(

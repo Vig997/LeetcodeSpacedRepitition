@@ -10,6 +10,7 @@ import {
   getTodayAssignments,
   addExtraReview as insertExtraReview,
   addExtraNew as insertExtraNew,
+  removeExtraAssignment as deleteExtraAssignment,
 } from './todayAssignments'
 import {
   applyReview,
@@ -199,6 +200,13 @@ export function addExtraReview(): { ok: boolean; message: string } {
 /** Same-day extra new slot (bypasses day-lock + new/day cap; resets next calendar day). */
 export function addExtraNew(): { ok: boolean; message: string } {
   const result = insertExtraNew()
+  if (result.ok) notify()
+  return result
+}
+
+/** Remove an unchecked extra the user added today (+ Extra review/new only). */
+export function removeExtraAssignment(assignmentId: number): { ok: boolean; message: string } {
+  const result = deleteExtraAssignment(assignmentId)
   if (result.ok) notify()
   return result
 }

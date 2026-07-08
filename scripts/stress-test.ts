@@ -56,6 +56,7 @@ import {
   undoLastRating,
   addExtraReview,
   addExtraNew,
+  removeExtraAssignment,
 } from '../src/lib/dataStore'
 import type { Rating } from '../src/lib/types'
 
@@ -244,6 +245,31 @@ assert(snap.pacing.doneKept === 43, 'seeded 43 done')
   // No duplicate problem ids on Today
   const idsToday = snapE.assignments.map((a) => a.problem_id)
   assert(new Set(idsToday).size === idsToday.length, 'extras never duplicate Today problems')
+
+  // Remove extra only — paced slots stay
+  const rmReview = removeExtraAssignment(extraReview!.id)
+  assert(rmReview.ok, `removeExtraReview: ${rmReview.message}`)
+  const rmNew = removeExtraAssignment(extraNew!.id)
+  assert(rmNew.ok, `removeExtraNew: ${rmNew.message}`)
+  snapE = getSnapshot()
+  assert(
+    snapE.assignments.filter((a) => a.is_extra === 1).length === 0,
+    'extras removed from Today',
+  )
+  assert(
+    snapE.assignments.filter((a) => a.kind === 'review').length === beforeReviews,
+    'paced reviews unchanged after removing extra',
+  )
+  const badRm = removeExtraAssignment(
+    snapE.assignments.find((a) => a.kind === 'review' && a.is_extra !== 1)!.id,
+  )
+  assert(!badRm.ok, 'cannot remove paced review')
+  // Re-add extras for remaining tests
+  addExtraReview()
+  addExtraNew()
+  snapE = getSnapshot()
+  reviews = snapE.assignments.filter((a) => a.kind === 'review')
+  news = snapE.assignments.filter((a) => a.kind === 'new')
 
   // Day-lock still holds for paced new: finish a paced new → no auto refill
   const pacedUncheckedNew = news.find((a) => a.is_extra !== 1 && a.checked === 0)

@@ -7,12 +7,11 @@ import {
   cancelBootstrap,
   addExtraReview,
   addExtraNew,
+  removeExtraAssignment,
 } from '../lib/dataStore'
 import ProgressRing from '../components/ProgressRing'
 import BonusRing from '../components/BonusRing'
-import GoalReachability from '../components/GoalReachability'
-import PaceAdvicePanel from '../components/PaceAdvice'
-import PaceStrip from '../components/PaceStrip'
+import PaceOverview from '../components/PaceOverview'
 import TodayReviewsList from '../components/TodayReviewsList'
 import TodayNewList from '../components/TodayNewList'
 import RatingModal from '../components/RatingModal'
@@ -71,9 +70,7 @@ export default function Dashboard() {
         />
       </div>
 
-      <GoalReachability goal={snap.goal} />
-      <PaceAdvicePanel advice={snap.advice} />
-      <PaceStrip pacing={snap.pacing} />
+      <PaceOverview goal={snap.goal} pacing={snap.pacing} advice={snap.advice} />
 
       {snap.bootstrapActive ? (
         <div className="flex justify-end">
@@ -107,6 +104,7 @@ export default function Dashboard() {
         assignments={reviews}
         onCheck={setRating}
         onAddExtra={() => addExtraReview()}
+        onRemoveExtra={(a) => removeExtraAssignment(a.id)}
         canAddExtra={canAddExtraReview}
       />
       <TodayNewList
@@ -114,6 +112,7 @@ export default function Dashboard() {
         bootstrapNewPerDay={snap.bootstrapActive ? snap.pacing.bootstrapNewPerDay : 0}
         onCheck={setRating}
         onAddExtra={() => addExtraNew()}
+        onRemoveExtra={(a) => removeExtraAssignment(a.id)}
         canAddExtra={canAddExtraNew}
       />
 

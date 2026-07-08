@@ -14,6 +14,13 @@ stays on your PC in SQLite. No cloud, no login.
 **One-file portable** (simpler, but unpacks on every launch so it feels slower):  
 **[⬇ LeetCode-Spaced-Repetition.exe](https://github.com/Vig997/LeetcodeSpacedRepitition/releases/latest/download/LeetCode-Spaced-Repetition.exe)**
 
+**Download looks empty or won't open?**
+
+1. Check your **Downloads** folder — browsers save there by default, not next to the link you clicked.
+2. In Edge/Chrome, open the download list (Ctrl+J). If the file says **Blocked** or **Discarded**, click **Keep** or **Show in folder**.
+3. Right-click the zip → **Extract All** — don't double-click the zip expecting an installer; unzip first, then run `LeetCode - Spaced Repetition.exe` inside the folder.
+4. If the file is tiny (a few KB), the download failed — open the [Releases page](https://github.com/Vig997/LeetcodeSpacedRepitition/releases/latest) and click the asset name directly (`LeetCode-Spaced-Repetition-win-x64.zip`, ~150 MB).
+
 Progress lives in `%APPDATA%\leetcode-sr\` (not next to the exe), so
 re-downloading won't wipe anything. Closing the app refreshes `data.backup.db`
 in that folder (SQLite backup API — safe with WAL).
