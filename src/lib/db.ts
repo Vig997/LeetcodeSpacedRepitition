@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import proc from 'node:process'
 
-const SCHEMA_VERSION = 1
+const SCHEMA_VERSION = 2
 
 const appData =
   proc.env.APPDATA ?? path.join(os.homedir(), 'AppData', 'Roaming')
@@ -137,7 +137,8 @@ CREATE TABLE IF NOT EXISTS today_assignments (
   position INTEGER NOT NULL DEFAULT 0,
   checked INTEGER NOT NULL DEFAULT 0,
   rated_at TEXT,
-  reconciled INTEGER NOT NULL DEFAULT 0
+  reconciled INTEGER NOT NULL DEFAULT 0,
+  is_extra INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -161,8 +162,20 @@ function migrateSchema(): void {
   const row = db
     .prepare("SELECT value FROM settings WHERE key = 'schema_version'")
     .get() as { value: string } | undefined
-  const current = row ? Number(row.value) : 0
-  if (!Number.isFinite(current) || current < SCHEMA_VERSION) {
+  let current = row ? Number(row.value) : 0
+  if (!Number.isFinite(current)) current = 0
+
+  if (current < 2) {
+    const cols = db.pragma('table_info(today_assignments)') as { name: string }[]
+    if (!cols.some((c) => c.name === 'is_extra')) {
+      db.exec(
+        'ALTER TABLE today_assignments ADD COLUMN is_extra INTEGER NOT NULL DEFAULT 0',
+      )
+    }
+    current = 2
+  }
+
+  if (!row || Number(row.value) !== SCHEMA_VERSION) {
     db.prepare(
       "INSERT INTO settings (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
     ).run(String(SCHEMA_VERSION))

@@ -36,6 +36,8 @@ import { pickNew } from '../src/lib/topicBalancer'
 import { ensureToday } from '../src/lib/todayAssignments'
 import { todayStr, addDays, daysBetween } from '../src/lib/dates'
 import { LOAD_CEILING } from '../src/lib/pacing'
+import { computePaceAdvice } from '../src/lib/paceAdvice'
+import type { PaceAdvice } from '../src/lib/paceAdvice'
 import { TOPICS } from '../src/lib/topics'
 import neetcode from '../data/neetcode150.json'
 import {
@@ -52,6 +54,8 @@ import {
   addProblem,
   rateReview,
   undoLastRating,
+  addExtraReview,
+  addExtraNew,
 } from '../src/lib/dataStore'
 import type { Rating } from '../src/lib/types'
 
@@ -94,6 +98,9 @@ function checkInvariants(label: string): void {
     if (a.kind === 'review' && a.checked === 0) {
       assert(a.problem.first_completed_at !== null, `${label}: review slot for undone problem`)
       assert(a.problem.is_excluded === 0, `${label}: review slot for removed problem`)
+    }
+    if (a.is_extra === 1) {
+      assert(a.is_extra === 1, `${label}: is_extra flag present`)
     }
   }
 
@@ -198,6 +205,202 @@ assert(snap.pacing.doneKept === 43, 'seeded 43 done')
   checkInvariants('day-locked new slots')
 }
 
+// Same-day extras: thorough coverage (normal + bootstrap + edges)
+{
+  // --- Normal mode ---
+  cancelBootstrap()
+  updateSetting('review_daily_target', 5)
+  updateSetting('new_per_day', 2)
+  ensureToday()
+  let snapE = getSnapshot()
+  const pacedReviewIds = new Set(
+    snapE.assignments.filter((a) => a.kind === 'review').map((a) => a.problem_id),
+  )
+  const pacedNewIds = new Set(
+    snapE.assignments.filter((a) => a.kind === 'new').map((a) => a.problem_id),
+  )
+  const beforeReviews = pacedReviewIds.size
+  const beforeNew = pacedNewIds.size
+
+  const r1 = addExtraReview()
+  assert(r1.ok, `addExtraReview: ${r1.message}`)
+  const n1 = addExtraNew()
+  assert(n1.ok, `addExtraNew: ${n1.message}`)
+  snapE = getSnapshot()
+  let reviews = snapE.assignments.filter((a) => a.kind === 'review')
+  let news = snapE.assignments.filter((a) => a.kind === 'new')
+  assert(reviews.length === beforeReviews + 1, 'extra review adds one slot')
+  assert(news.length === beforeNew + 1, 'extra new adds one slot')
+  const extraReview = reviews.find((a) => a.is_extra === 1)
+  const extraNew = news.find((a) => a.is_extra === 1)
+  assert(extraReview !== undefined, 'extra review flagged is_extra')
+  assert(extraNew !== undefined, 'extra new flagged is_extra')
+  assert(!pacedReviewIds.has(extraReview!.problem_id), 'extra review not already paced')
+  assert(!pacedNewIds.has(extraNew!.problem_id), 'extra new not already paced')
+  assert(extraNew!.problem.first_completed_at === null, 'extra new is undone Kept')
+  assert(extraNew!.problem.is_custom === 0, 'extra new is not custom')
+  assert(extraReview!.problem.first_completed_at !== null, 'extra review is done SR')
+
+  // No duplicate problem ids on Today
+  const idsToday = snapE.assignments.map((a) => a.problem_id)
+  assert(new Set(idsToday).size === idsToday.length, 'extras never duplicate Today problems')
+
+  // Day-lock still holds for paced new: finish a paced new → no auto refill
+  const pacedUncheckedNew = news.find((a) => a.is_extra !== 1 && a.checked === 0)
+  if (pacedUncheckedNew) {
+    const pacedNewBefore = news.filter((a) => a.is_extra !== 1).map((a) => a.problem_id).sort()
+    completeProblemAssignment(pacedUncheckedNew.id, pacedUncheckedNew.problem_id, 'easy', 0)
+    snapE = getSnapshot()
+    const pacedNewAfter = snapE.assignments
+      .filter((a) => a.kind === 'new' && a.is_extra !== 1)
+      .map((a) => a.problem_id)
+      .sort()
+    assert(
+      pacedNewAfter.join(',') === pacedNewBefore.join(','),
+      'finishing paced new still day-locked (extras do not break day-lock)',
+    )
+    // But + Extra new still works after finishing a paced new
+    const n2 = addExtraNew()
+    assert(n2.ok, `addExtraNew after finishing paced: ${n2.message}`)
+    assert(
+      getSnapshot().assignments.filter((a) => a.kind === 'new' && a.is_extra === 1).length >= 2,
+      'can stack multiple extra news same day',
+    )
+  }
+
+  // Completing an extra review / extra new works end-to-end
+  snapE = getSnapshot()
+  const openExtraReview = snapE.assignments.find(
+    (a) => a.kind === 'review' && a.is_extra === 1 && a.checked === 0,
+  )
+  if (openExtraReview) {
+    rateReviewAssignment(openExtraReview.id, openExtraReview.problem_id, 'medium', 0)
+    assert(
+      getSnapshot().assignments.find((a) => a.id === openExtraReview.id)?.checked === 1,
+      'extra review can be rated',
+    )
+  }
+  const openExtraNew = snapE.assignments.find(
+    (a) => a.kind === 'new' && a.is_extra === 1 && a.checked === 0,
+  )
+  if (openExtraNew) {
+    completeProblemAssignment(openExtraNew.id, openExtraNew.problem_id, 'medium', 0)
+    assert(
+      getSnapshot().assignments.find((a) => a.id === openExtraNew.id)?.checked === 1,
+      'extra new can be completed',
+    )
+    assert(
+      getSnapshot().problems.find((p) => p.id === openExtraNew.problem_id)?.first_completed_at !==
+        null,
+      'extra new completion marks problem done',
+    )
+  }
+  checkInvariants('extras after rate/complete')
+
+  // Lowering caps must not strip remaining extras
+  updateSetting('review_daily_target', 1)
+  updateSetting('new_per_day', 1)
+  ensureToday()
+  snapE = getSnapshot()
+  assert(
+    snapE.assignments.some((a) => a.kind === 'review' && a.is_extra === 1),
+    'extra review survives paced trim',
+  )
+  assert(
+    snapE.assignments.some((a) => a.kind === 'new' && a.is_extra === 1),
+    'extra new survives paced trim',
+  )
+  checkInvariants('extras survive trim')
+
+  // Next day: paced set only (extras do not carry)
+  advanceDays(1)
+  snapE = getSnapshot()
+  assert(!snapE.assignments.some((a) => a.is_extra === 1), 'extras do not carry to next day')
+  assert(snapE.pacing.reviewsToday <= 5, 'next day reviews back to paced target')
+  checkInvariants('extras next-day reset')
+
+  // --- Bootstrap mode ---
+  cancelBootstrap()
+  const bootIds = getSnapshot().bootstrapCandidates.slice(0, 8).map((p) => p.id)
+  startBootstrap(bootIds, 3, 0) // 0 new/day — extras should still allow new
+  snapE = getSnapshot()
+  assert(snapE.bootstrapActive, 'bootstrap active for extras test')
+  assert(
+    snapE.assignments.filter((a) => a.kind === 'new').length === 0,
+    'bootstrap with 0 new/day starts with no paced new',
+  )
+  const bootReviewIds = new Set(
+    snapE.assignments.filter((a) => a.kind === 'review').map((a) => a.problem_id),
+  )
+  assert(bootReviewIds.size === 3, 'bootstrap day1 has 3 paced reviews')
+
+  // Extra review: next roadmap bootstrap problem not already on Today
+  const bootPool = snapE.problems
+    .filter((p) => p.status === 'bootstrap' && p.is_excluded === 0)
+    .sort(
+      (a, b) =>
+        (a.neetcode_order === null ? 1 : 0) - (b.neetcode_order === null ? 1 : 0) ||
+        (a.neetcode_order ?? 0) - (b.neetcode_order ?? 0) ||
+        a.id - b.id,
+    )
+  const expectedExtraReview = bootPool.find((p) => !bootReviewIds.has(p.id))
+  assert(expectedExtraReview !== undefined, 'bootstrap pool has leftover for extra review')
+  const br = addExtraReview()
+  assert(br.ok, `bootstrap addExtraReview: ${br.message}`)
+  snapE = getSnapshot()
+  const bootExtraReview = snapE.assignments.find(
+    (a) => a.kind === 'review' && a.is_extra === 1,
+  )
+  assert(bootExtraReview !== undefined, 'bootstrap extra review present')
+  assert(
+    bootExtraReview!.problem_id === expectedExtraReview!.id,
+    `bootstrap extra review is next roadmap pool item (got ${bootExtraReview!.problem.slug}, want ${expectedExtraReview!.slug})`,
+  )
+  assert(bootExtraReview!.problem.status === 'bootstrap', 'bootstrap extra review from pool')
+
+  // Extra new during bootstrap (even with 0 new/day): next Kept undone
+  const expectedNew = pickNew(1, new Set(snapE.assignments.map((a) => a.problem_id)))[0]
+  assert(expectedNew !== undefined, 'undone Kept available for bootstrap extra new')
+  const bn = addExtraNew()
+  assert(bn.ok, `bootstrap addExtraNew: ${bn.message}`)
+  snapE = getSnapshot()
+  const bootExtraNew = snapE.assignments.find((a) => a.kind === 'new' && a.is_extra === 1)
+  assert(bootExtraNew !== undefined, 'bootstrap extra new present')
+  assert(
+    bootExtraNew!.problem_id === expectedNew.id,
+    `bootstrap extra new is next roadmap undone (got ${bootExtraNew!.problem.slug}, want ${expectedNew.slug})`,
+  )
+  assert(bootExtraNew!.problem.first_completed_at === null, 'bootstrap extra new is undone')
+  checkInvariants('bootstrap extras')
+
+  // Completing bootstrap extra new works
+  completeProblemAssignment(bootExtraNew!.id, bootExtraNew!.problem_id, 'easy', 0)
+  assert(
+    getSnapshot().problems.find((p) => p.id === bootExtraNew!.problem_id)?.first_completed_at !==
+      null,
+    'bootstrap extra new completion marks done',
+  )
+
+  // Exhaust bootstrap extras until pool empty
+  let guard = 0
+  while (addExtraReview().ok && guard++ < 20) {
+    /* drain */
+  }
+  const drained = addExtraReview()
+  assert(!drained.ok, 'addExtraReview fails when bootstrap pool exhausted')
+  checkInvariants('bootstrap extras exhausted')
+
+  cancelBootstrap()
+  checkInvariants('after cancel with prior extras')
+
+  // Restore settings for the rest of the suite
+  updateSetting('review_daily_target', 5)
+  updateSetting('new_per_day', 0) // Auto
+  ensureToday()
+  checkInvariants('extras suite cleanup')
+  console.log('  same-day extras: normal + bootstrap + edges ok')
+}
+
 // Undo last rating: first completion then undo restores undone state
 {
   cancelBootstrap()
@@ -258,6 +461,138 @@ assert(snap.pacing.doneKept === 43, 'seeded 43 done')
   const snap = getSnapshot()
   assert(snap.pacing.reviewsDueTotal >= snap.pacing.reviewsToday, 'due total >= assigned')
   assert(typeof snap.pacing.reviewsOverdue === 'number', 'reviewsOverdue tracked')
+}
+
+function clearAdviceWindow(): void {
+  const start = addDays(todayStr(), -14)
+  db.prepare(
+    'DELETE FROM today_assignments WHERE assignment_date >= ? AND assignment_date < ?',
+  ).run(start, todayStr())
+}
+
+function seedAdviceHistory(
+  days: number,
+  reviewPerDay: number,
+  reviewDonePerDay: number,
+  newPerDay = 0,
+  newDonePerDay = 0,
+): void {
+  const reviewIds = (
+    db
+      .prepare(
+        `SELECT id FROM problems WHERE first_completed_at IS NOT NULL AND is_excluded = 0 LIMIT 50`,
+      )
+      .all() as { id: number }[]
+  ).map((r) => r.id)
+  const newIds = (
+    db
+      .prepare(
+        `SELECT id FROM problems WHERE first_completed_at IS NULL AND is_custom = 0 AND is_excluded = 0 LIMIT 50`,
+      )
+      .all() as { id: number }[]
+  ).map((r) => r.id)
+  assert(reviewIds.length >= reviewPerDay, 'seedAdviceHistory: need review problem ids')
+  const insert = db.prepare(
+    'INSERT INTO today_assignments (assignment_date, problem_id, kind, position, checked, is_extra) VALUES (?, ?, ?, ?, ?, 0)',
+  )
+  for (let i = 1; i <= days; i++) {
+    const d = addDays(todayStr(), -i)
+    for (let p = 0; p < reviewPerDay; p++) {
+      insert.run(d, reviewIds[p % reviewIds.length], 'review', p, p < reviewDonePerDay ? 1 : 0)
+    }
+    for (let p = 0; p < newPerDay; p++) {
+      insert.run(d, newIds[p % newIds.length], 'new', p, p < newDonePerDay ? 1 : 0)
+    }
+  }
+}
+
+function assertAdviceInvariants(advice: PaceAdvice, label: string): void {
+  assert(typeof advice.headline === 'string' && advice.headline.length > 0, `${label}: empty headline`)
+  assert(typeof advice.detail === 'string' && advice.detail.length > 0, `${label}: empty detail`)
+  for (const s of advice.suggestions) {
+    assert(s.to >= 0 && s.to <= 10, `${label}: ${s.setting} to=${s.to} out of range`)
+    if (s.action === 'increase' && s.setting === 'review_daily_target') {
+      assert(
+        advice.metrics.reviewFinishRate >= 0.75,
+        `${label}: increase reviews when finish rate ${advice.metrics.reviewFinishRate}`,
+      )
+    }
+  }
+}
+
+// Pace advice: overloaded, behind, ahead, bootstrap
+{
+  cancelBootstrap()
+  const savedGoal = getSnapshot().settings.goal_date
+  const savedReview = getSnapshot().settings.review_daily_target
+  const savedNew = getSnapshot().settings.new_per_day
+
+  // Overloaded — low review finish rate → decrease reviews
+  clearAdviceWindow()
+  updateSetting('review_daily_target', 8)
+  updateSetting('new_per_day', 2)
+  seedAdviceHistory(10, 6, 2)
+  let advice = computePaceAdvice()
+  assert(advice.status === 'overloaded', `overloaded status=${advice.status}`)
+  const decReview = advice.suggestions.find(
+    (s) => s.setting === 'review_daily_target' && s.action === 'decrease',
+  )
+  assert(decReview !== undefined, 'overloaded suggests lower review cap')
+  assert(
+    !advice.suggestions.some(
+      (s) => s.setting === 'review_daily_target' && s.action === 'increase',
+    ),
+    'overloaded must not increase reviews',
+  )
+  assertAdviceInvariants(advice, 'overloaded')
+
+  // Behind — good finish rates but new/day too low for goal
+  clearAdviceWindow()
+  updateSetting('new_per_day', 1)
+  updateSetting('goal_date', addDays(todayStr(), 25))
+  seedAdviceHistory(8, 5, 5, 2, 2)
+  advice = computePaceAdvice()
+  assert(
+    advice.status === 'behind' || advice.suggestions.some((s) => s.setting === 'new_per_day' && s.action === 'increase'),
+    `behind path status=${advice.status}`,
+  )
+  assertAdviceInvariants(advice, 'behind')
+
+  // Ahead — ahead of linear ramp with strong finish rates
+  clearAdviceWindow()
+  updateSetting('new_per_day', 5)
+  updateSetting('goal_date', addDays(todayStr(), 120))
+  seedAdviceHistory(10, 4, 4, 3, 3)
+  advice = computePaceAdvice()
+  assert(
+    ['ahead', 'on_pace'].includes(advice.status),
+    `ahead/on_pace status=${advice.status}`,
+  )
+  assertAdviceInvariants(advice, 'ahead')
+
+  // Bootstrap — bootstrap-focused advice
+  clearAdviceWindow()
+  cancelBootstrap()
+  const bootIds = getSnapshot().bootstrapCandidates.slice(0, 6).map((p) => p.id)
+  startBootstrap(bootIds, 5)
+  seedAdviceHistory(6, 5, 5)
+  advice = computePaceAdvice()
+  assert(advice.status === 'bootstrap', `bootstrap status=${advice.status}`)
+  assert(
+    advice.suggestions.some((s) => s.setting === 'bootstrap_daily_cap'),
+    'bootstrap advice mentions bootstrap cap',
+  )
+  assertAdviceInvariants(advice, 'bootstrap')
+  cancelBootstrap()
+
+  // Snapshot exposes advice
+  updateSetting('goal_date', savedGoal)
+  updateSetting('review_daily_target', savedReview)
+  updateSetting('new_per_day', savedNew)
+  clearAdviceWindow()
+  ensureToday()
+  assert(typeof getSnapshot().advice.headline === 'string', 'snapshot.advice present')
+  console.log('  pace advice: overloaded + behind + ahead + bootstrap ok')
 }
 
 // Bootstrap reviews carryover capped at 10/day

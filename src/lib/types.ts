@@ -46,6 +46,8 @@ export interface TodayAssignment {
   checked: 0 | 1
   rated_at: string | null
   reconciled: 0 | 1
+  /** 1 = user-added same-day extra (ignored by paced trim / day-lock). */
+  is_extra: 0 | 1
 }
 
 export interface AppSettings {

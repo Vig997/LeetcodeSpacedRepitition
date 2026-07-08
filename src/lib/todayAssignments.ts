@@ -10,7 +10,10 @@ export interface AssignmentWithProblem extends TodayAssignment {
 }
 
 const insertAssignment = db.prepare(
-  'INSERT INTO today_assignments (assignment_date, problem_id, kind, position) VALUES (?, ?, ?, ?)',
+  'INSERT INTO today_assignments (assignment_date, problem_id, kind, position, is_extra) VALUES (?, ?, ?, ?, 0)',
+)
+const insertExtraAssignment = db.prepare(
+  'INSERT INTO today_assignments (assignment_date, problem_id, kind, position, is_extra) VALUES (?, ?, ?, ?, 1)',
 )
 const deleteAssignmentById = db.prepare('DELETE FROM today_assignments WHERE id = ?')
 
@@ -72,6 +75,29 @@ function dueReviewsForToday(today: string): Problem[] {
     .all(today) as Problem[]
 }
 
+/** Bootstrap extras: next roadmap problem still in the bootstrap pool (due or not). */
+function bootstrapPoolNotOnToday(excludeIds: Set<number>): Problem[] {
+  const rows = db
+    .prepare(
+      `SELECT * FROM problems WHERE is_excluded = 0 AND status = 'bootstrap'
+       ORDER BY (neetcode_order IS NULL), neetcode_order ASC, id ASC`,
+    )
+    .all() as Problem[]
+  return rows.filter((p) => !excludeIds.has(p.id))
+}
+
+/** Normal extras when nothing is due: remaining done SR problems not already on Today. */
+function srPoolNotOnToday(excludeIds: Set<number>): Problem[] {
+  const rows = db
+    .prepare(
+      `SELECT * FROM problems WHERE is_excluded = 0 AND first_completed_at IS NOT NULL
+       AND status != 'bootstrap'
+       ORDER BY next_review_at ASC, id ASC`,
+    )
+    .all() as Problem[]
+  return rows.filter((p) => !excludeIds.has(p.id))
+}
+
 function todayAssignmentCounts(): { reviews: number; news: number } {
   const row = db
     .prepare(
@@ -130,13 +156,16 @@ export function refreshTodayNewSlots(): void {
     .all(today) as TodayAssignment[]
 
   const newRows = rows.filter((r) => r.kind === 'new')
+  const pacedNew = newRows.filter((r) => r.is_extra !== 1)
   const cap = Math.max(pacing.newToday, 0)
 
-  // Day already has a new set — keep problem IDs; only trim if over cap.
-  if (newRows.length > 0) {
-    if (newRows.length > cap) {
-      const keepIds = new Set(newRows.slice(0, cap).map((r) => r.id))
-      const excess = newRows.filter((r) => !keepIds.has(r.id) && r.checked === 0)
+  // Day already has a paced new set — keep those IDs; only trim paced rows if over cap.
+  // User-added extras (is_extra=1) are never trimmed by day-lock.
+  // If only extras exist (no paced rows yet), still fall through to first paced assign.
+  if (pacedNew.length > 0) {
+    if (pacedNew.length > cap) {
+      const keepIds = new Set(pacedNew.slice(0, cap).map((r) => r.id))
+      const excess = pacedNew.filter((r) => !keepIds.has(r.id) && r.checked === 0)
       if (excess.length > 0) {
         const tx = db.transaction(() => {
           for (const r of excess) deleteAssignmentById.run(r.id)
@@ -156,6 +185,59 @@ export function refreshTodayNewSlots(): void {
     picks.forEach((p, i) => insertAssignment.run(today, p.id, 'new', i))
   })
   tx()
+}
+
+/**
+ * Explicit same-day "do one more" — bypasses pacing caps and Today · New day-lock.
+ * Next calendar day still starts from the normal paced set.
+ *
+ * Reviews:
+ * - Bootstrap: next NeetCode-order problem still in the bootstrap pool (not already Today).
+ * - Normal: one due review (day-seeded topic pick); if none due, a remaining done SR problem.
+ *
+ * New (bootstrap or not): next Kept · Undone in NeetCode roadmap order.
+ */
+export function addExtraReview(): { ok: boolean; message: string } {
+  const today = todayStr()
+  const rows = getTodayAssignments()
+  const assignedIds = new Set(rows.map((r) => r.problem_id))
+
+  let pick: Problem | undefined
+  if (isBootstrapActive()) {
+    pick = pickBootstrapReviews(bootstrapPoolNotOnToday(assignedIds), 1)[0]
+  } else {
+    const due = dueReviewsForToday(today).filter((p) => !assignedIds.has(p.id))
+    pick = pickReviews(due, 1)[0] ?? pickReviews(srPoolNotOnToday(assignedIds), 1)[0]
+  }
+
+  if (!pick) {
+    return {
+      ok: false,
+      message: isBootstrapActive()
+        ? 'No more bootstrap problems left to add'
+        : 'No more reviews available to add',
+    }
+  }
+
+  const maxPos = Math.max(
+    -1,
+    ...rows.filter((r) => r.kind === 'review').map((r) => r.position),
+  )
+  insertExtraAssignment.run(today, pick.id, 'review', maxPos + 1)
+  return { ok: true, message: `Added ${pick.title}` }
+}
+
+export function addExtraNew(): { ok: boolean; message: string } {
+  const today = todayStr()
+  const rows = getTodayAssignments()
+  const excludeIds = new Set(rows.map((r) => r.problem_id))
+  const pick = pickNew(1, excludeIds)[0]
+  if (!pick) {
+    return { ok: false, message: 'No more undone Kept problems to add' }
+  }
+  const maxPos = Math.max(-1, ...rows.filter((r) => r.kind === 'new').map((r) => r.position))
+  insertExtraAssignment.run(today, pick.id, 'new', maxPos + 1)
+  return { ok: true, message: `Added ${pick.title}` }
 }
 
 export function getTodayAssignments(): AssignmentWithProblem[] {
@@ -239,13 +321,16 @@ export function reassignUncheckedToday(): void {
 
   const adjustReviews = (target: number): void => {
     const checked = rows.filter((r) => r.kind === 'review' && r.checked === 1)
-    const unchecked = rows.filter((r) => r.kind === 'review' && r.checked === 0)
+    // Extras are user-added for today — never trim them when the paced cap drops.
+    const uncheckedPaced = rows.filter(
+      (r) => r.kind === 'review' && r.checked === 0 && r.is_extra !== 1,
+    )
     const wantUnchecked = Math.max(target - checked.length, 0)
 
-    if (unchecked.length > wantUnchecked) {
-      for (const r of unchecked.slice(wantUnchecked)) deleteAssignmentById.run(r.id)
-    } else if (unchecked.length < wantUnchecked) {
-      const needed = wantUnchecked - unchecked.length
+    if (uncheckedPaced.length > wantUnchecked) {
+      for (const r of uncheckedPaced.slice(wantUnchecked)) deleteAssignmentById.run(r.id)
+    } else if (uncheckedPaced.length < wantUnchecked) {
+      const needed = wantUnchecked - uncheckedPaced.length
       const assignedIds = new Set(rows.map((r) => r.problem_id))
       const due = dueReviewsForToday(today).filter((p) => !assignedIds.has(p.id))
       const picks = pickReviewsWithCarryover(due, needed)
@@ -256,26 +341,23 @@ export function reassignUncheckedToday(): void {
 
   const adjustNewDayLocked = (target: number): void => {
     const newRows = rows.filter((r) => r.kind === 'new')
-    if (newRows.length === 0) {
-      // No set yet today — first assign (e.g. after rebuildUnchecked wiped them).
+    const pacedNew = newRows.filter((r) => r.is_extra !== 1)
+    if (pacedNew.length === 0) {
+      // No paced set yet — first assign (extras may already exist from + Extra new).
       if (target <= 0) return
       const assignedIds = new Set(rows.map((r) => r.problem_id))
       const picks = pickNewForToday(target, assignedIds)
       picks.forEach((p, i) => insertAssignment.run(today, p.id, 'new', i))
       return
     }
-    // Day-locked: never grow; trim unchecked excess only.
-    if (newRows.length > target) {
-      const unchecked = newRows.filter((r) => r.checked === 0)
-      const excess = unchecked.slice(Math.max(target - (newRows.length - unchecked.length), 0))
-      // Keep first `target` rows by position; drop later unchecked.
+    // Day-locked: never grow paced set; trim paced unchecked excess only (keep extras).
+    if (pacedNew.length > target) {
       const keep = new Set(
-        [...newRows].sort((a, b) => a.position - b.position).slice(0, target).map((r) => r.id),
+        [...pacedNew].sort((a, b) => a.position - b.position).slice(0, target).map((r) => r.id),
       )
-      for (const r of newRows) {
+      for (const r of pacedNew) {
         if (!keep.has(r.id) && r.checked === 0) deleteAssignmentById.run(r.id)
       }
-      void excess
     }
   }
 

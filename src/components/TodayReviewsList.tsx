@@ -4,14 +4,34 @@ import type { AssignmentWithProblem } from '../lib/todayAssignments'
 interface Props {
   assignments: AssignmentWithProblem[]
   onCheck: (a: AssignmentWithProblem) => void
+  onAddExtra?: () => void
+  canAddExtra?: boolean
 }
 
-export default function TodayReviewsList({ assignments, onCheck }: Props) {
+export default function TodayReviewsList({
+  assignments,
+  onCheck,
+  onAddExtra,
+  canAddExtra = true,
+}: Props) {
   return (
     <section className="rounded-xl border border-gray-800 bg-gray-900/60 p-5">
-      <h2 className="mb-3 text-sm font-semibold tracking-wide text-gray-400 uppercase">
-        Today · Reviews ({assignments.length})
-      </h2>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h2 className="text-sm font-semibold tracking-wide text-gray-400 uppercase">
+          Today · Reviews ({assignments.length})
+        </h2>
+        {onAddExtra && (
+          <button
+            type="button"
+            onClick={onAddExtra}
+            disabled={!canAddExtra}
+            className="rounded-md border border-gray-700 px-2.5 py-1 text-xs text-gray-300 transition hover:border-emerald-700 hover:text-emerald-300 disabled:cursor-not-allowed disabled:opacity-40"
+            title="Add one more review for today only (resets tomorrow)"
+          >
+            + Extra review
+          </button>
+        )}
+      </div>
       {assignments.length === 0 ? (
         <p className="text-sm text-gray-500">No reviews due — you're caught up!</p>
       ) : (

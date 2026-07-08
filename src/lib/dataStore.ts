@@ -8,6 +8,8 @@ import {
   reassignUncheckedToday,
   rebuildUncheckedToday,
   getTodayAssignments,
+  addExtraReview as insertExtraReview,
+  addExtraNew as insertExtraNew,
 } from './todayAssignments'
 import {
   applyReview,
@@ -18,6 +20,7 @@ import {
   cancelBootstrap as schedulerCancelBootstrap,
 } from './scheduler'
 import { computePacing, goalReachability } from './pacing'
+import { computePaceAdvice } from './paceAdvice'
 import { getAppSettings, setSetting, getSetting } from './settings'
 import { todayStr } from './dates'
 import {
@@ -30,6 +33,7 @@ import { getDbOpenError } from './db'
 import type { AppSettings, Problem, Rating } from './types'
 import type { AssignmentWithProblem } from './todayAssignments'
 import type { GoalReachability, PacingResult } from './pacing'
+import type { PaceAdvice } from './paceAdvice'
 
 // ---- init on module load (skip if DB failed to open) ----
 if (!getDbOpenError()) {
@@ -74,6 +78,7 @@ export interface Snapshot {
   assignments: AssignmentWithProblem[]
   pacing: PacingResult
   goal: GoalReachability
+  advice: PaceAdvice
   settings: AppSettings
   bootstrapActive: boolean
   bootstrapCompleted: boolean
@@ -114,6 +119,7 @@ export function getSnapshot(): Snapshot {
     assignments: getTodayAssignments(),
     pacing: computePacing(),
     goal: goalReachability(),
+    advice: computePaceAdvice(),
     settings: getAppSettings(),
     bootstrapActive: isBootstrapActive(),
     bootstrapCompleted: wasBootstrapCompleted(),
@@ -176,9 +182,23 @@ export function completeProblemAssignment(
   notify()
 }
 
-/** Undo the most recent rating / mark-done from this session. */
+/** Undo the most recent rating / mark-done (same calendar day). */
 export function undoLastRating(): { ok: boolean; message: string } {
   const result = revertLastRating()
+  if (result.ok) notify()
+  return result
+}
+
+/** Same-day extra review slot (bypasses daily review cap; resets next calendar day). */
+export function addExtraReview(): { ok: boolean; message: string } {
+  const result = insertExtraReview()
+  if (result.ok) notify()
+  return result
+}
+
+/** Same-day extra new slot (bypasses day-lock + new/day cap; resets next calendar day). */
+export function addExtraNew(): { ok: boolean; message: string } {
+  const result = insertExtraNew()
   if (result.ok) notify()
   return result
 }

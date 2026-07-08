@@ -31,7 +31,8 @@ Windows may warn about an unknown publisher (unsigned personal build) — that's
 ## What you can do
 
 - **Dashboard** — rings for Kept NeetCode + custom bonus problems, a "are you
-  on track for your goal?" message, and Today · Reviews / Today · New. Check a
+  on track for your goal?" message, adaptive **pace advice** (which settings to
+  raise or lower from your recent finish rates), and Today · Reviews / Today · New. Check a
   row, rate it (Easy / Medium / Hard / Forgot + hints), done. There's an
   **Undo rating** button if you misclick (saved for the same calendar day even if you close the app).
 - **Bootstrap (optional)** — if you already finished a bunch of problems, you
@@ -44,7 +45,9 @@ Windows may warn about an unknown publisher (unsigned personal build) — that's
 
 I also capped daily load at 10 so you don't get buried, and Today · New stays
 locked for the day (finishing one doesn't instantly pull the next until
-tomorrow).
+tomorrow). If you finish early and want more, use **+ Extra review** /
+**+ Extra new** on the Dashboard — same-day only; tomorrow goes back to your
+normal paced set.
 
 ## Run from source
 

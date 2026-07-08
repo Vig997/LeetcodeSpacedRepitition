@@ -5,11 +5,14 @@ import {
   completeProblemAssignment,
   startBootstrap,
   cancelBootstrap,
+  addExtraReview,
+  addExtraNew,
 } from '../lib/dataStore'
 import ProgressRing from '../components/ProgressRing'
 import BonusRing from '../components/BonusRing'
-import PaceStrip from '../components/PaceStrip'
 import GoalReachability from '../components/GoalReachability'
+import PaceAdvicePanel from '../components/PaceAdvice'
+import PaceStrip from '../components/PaceStrip'
 import TodayReviewsList from '../components/TodayReviewsList'
 import TodayNewList from '../components/TodayNewList'
 import RatingModal from '../components/RatingModal'
@@ -27,8 +30,23 @@ export default function Dashboard() {
 
   const reviews = snap.assignments.filter((a) => a.kind === 'review')
   const news = snap.assignments.filter((a) => a.kind === 'new')
-  const showNewSection =
-    !snap.bootstrapActive || snap.pacing.bootstrapNewPerDay > 0
+  const onToday = new Set(snap.assignments.map((a) => a.problem_id))
+  const canAddExtraReview = snap.bootstrapActive
+    ? snap.problems.some((p) => p.is_excluded === 0 && p.status === 'bootstrap' && !onToday.has(p.id))
+    : snap.problems.some(
+        (p) =>
+          p.is_excluded === 0 &&
+          p.first_completed_at !== null &&
+          p.status !== 'bootstrap' &&
+          !onToday.has(p.id),
+      )
+  const canAddExtraNew = snap.problems.some(
+    (p) =>
+      p.is_excluded === 0 &&
+      p.is_custom === 0 &&
+      p.first_completed_at === null &&
+      !onToday.has(p.id),
+  )
 
   const saveRating = (r: Rating, hints: number): void => {
     if (!rating) return
@@ -54,6 +72,7 @@ export default function Dashboard() {
       </div>
 
       <GoalReachability goal={snap.goal} />
+      <PaceAdvicePanel advice={snap.advice} />
       <PaceStrip pacing={snap.pacing} />
 
       {snap.bootstrapActive ? (
@@ -84,14 +103,19 @@ export default function Dashboard() {
         )
       )}
 
-      <TodayReviewsList assignments={reviews} onCheck={setRating} />
-      {showNewSection && (
-        <TodayNewList
-          assignments={news}
-          bootstrapNewPerDay={snap.bootstrapActive ? snap.pacing.bootstrapNewPerDay : 0}
-          onCheck={setRating}
-        />
-      )}
+      <TodayReviewsList
+        assignments={reviews}
+        onCheck={setRating}
+        onAddExtra={() => addExtraReview()}
+        canAddExtra={canAddExtraReview}
+      />
+      <TodayNewList
+        assignments={news}
+        bootstrapNewPerDay={snap.bootstrapActive ? snap.pacing.bootstrapNewPerDay : 0}
+        onCheck={setRating}
+        onAddExtra={() => addExtraNew()}
+        canAddExtra={canAddExtraNew}
+      />
 
       {rating && (
         <RatingModal
