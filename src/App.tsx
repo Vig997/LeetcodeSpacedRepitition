@@ -52,7 +52,7 @@ export default function App() {
             type="button"
             onClick={() => undoLastRating()}
             className="rounded-lg border border-gray-700 px-3 py-1.5 text-xs text-gray-300 transition hover:border-amber-700 hover:text-amber-300"
-            title="Undo last rating (this session)"
+            title="Undo last rating (same calendar day, survives restart)"
           >
             Undo rating
           </button>

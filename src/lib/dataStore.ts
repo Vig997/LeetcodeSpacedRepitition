@@ -26,13 +26,16 @@ import {
   clearUndo,
   setLastUndoAssignmentId,
 } from './undo'
+import { getDbOpenError } from './db'
 import type { AppSettings, Problem, Rating } from './types'
 import type { AssignmentWithProblem } from './todayAssignments'
 import type { GoalReachability, PacingResult } from './pacing'
 
-// ---- init on module load ----
-seedIfNeeded()
-ensureToday()
+// ---- init on module load (skip if DB failed to open) ----
+if (!getDbOpenError()) {
+  seedIfNeeded()
+  ensureToday()
+}
 
 // ---- subscription (all tabs re-render on any mutation) ----
 let version = 0
@@ -82,7 +85,7 @@ export interface Snapshot {
   customEasy: number
   customMedium: number
   customHard: number
-  /** True when the last rating/mark-done in this session can be undone. */
+  /** True when the last rating/mark-done today can be undone (same calendar day). */
   canUndo: boolean
 }
 

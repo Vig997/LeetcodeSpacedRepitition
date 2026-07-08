@@ -84,18 +84,17 @@ function todayAssignmentCounts(): { reviews: number; news: number } {
   return { reviews: row.reviews ?? 0, news: row.news ?? 0 }
 }
 
-/**
- * Idempotent per calendar day:
- * 1. Reconcile past days.
- * 2. Roll bootstrap new slots forward (no stacking).
- * 3. Ensure review rows exist; refresh new slots.
- */
 export function ensureToday(): void {
   const today = todayStr()
 
   db.prepare(
     'UPDATE today_assignments SET reconciled = 1 WHERE assignment_date < ? AND reconciled = 0',
   ).run(today)
+
+  // Orphan assignment rows (problem deleted) would crash the Today lists.
+  db.prepare(
+    `DELETE FROM today_assignments WHERE problem_id NOT IN (SELECT id FROM problems)`,
+  ).run()
 
   rolloverBootstrapNewSlots()
 
@@ -175,7 +174,24 @@ export function getTodayAssignments(): AssignmentWithProblem[] {
     .all(...ids) as Problem[]
   const byId = new Map(problems.map((p) => [p.id, p]))
 
-  return rows.map((r) => ({ ...r, problem: byId.get(r.problem_id)! }))
+  const orphanIds: number[] = []
+  const out: AssignmentWithProblem[] = []
+  for (const r of rows) {
+    const problem = byId.get(r.problem_id)
+    if (!problem) {
+      orphanIds.push(r.id)
+      continue
+    }
+    out.push({ ...r, problem })
+  }
+  if (orphanIds.length > 0) {
+    const del = db.prepare('DELETE FROM today_assignments WHERE id = ?')
+    const tx = db.transaction(() => {
+      for (const id of orphanIds) del.run(id)
+    })
+    tx()
+  }
+  return out
 }
 
 /** Mark an assignment row checked after its rating was saved. */

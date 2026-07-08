@@ -71,6 +71,7 @@ export function seedIfNeeded(): void {
     ensureSettingsDefaults()
     if (getSetting('start_date') === null) setSetting('start_date', today)
     if (getSetting('start_done') === null) setSetting('start_done', i)
+    setSetting('schema_version', '1')
   })
   tx()
 }
@@ -87,6 +88,7 @@ function ensureSettingsDefaults(): void {
     bootstrap_daily_cap: String(DEFAULT_SETTINGS.bootstrap_daily_cap),
     review_daily_target: String(DEFAULT_SETTINGS.review_daily_target),
     new_per_day: String(DEFAULT_SETTINGS.new_per_day),
+    schema_version: '1',
   }
   for (const [k, v] of Object.entries(defaults)) {
     if (getSetting(k) === null) setSetting(k, v)

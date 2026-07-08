@@ -16,8 +16,17 @@ stays on your PC in SQLite. No cloud, no login.
 
 Progress lives in `%APPDATA%\leetcode-sr\` (not next to the exe), so
 re-downloading won't wipe anything. Closing the app refreshes `data.backup.db`
-in that folder — if something goes wrong, close the app and copy
-`data.backup.db` over `data.db`.
+in that folder (SQLite backup API — safe with WAL).
+
+**If something goes wrong — restore:**
+
+1. Close the app completely.
+2. In `%APPDATA%\leetcode-sr\`, delete `data.db`, `data.db-wal`, and `data.db-shm`
+   (sidecars matter — leaving them can undo a good restore).
+3. Copy `data.backup.db` to `data.db`.
+4. Reopen the app.
+
+Windows may warn about an unknown publisher (unsigned personal build) — that's expected.
 
 ## What you can do
 
@@ -46,7 +55,7 @@ npm run dev
 ```
 
 Other scripts: `npm run lint`, `npm run stress` (fake ~75 days in a temp folder,
-not your real AppData), `npm run dist` (builds the exe — close the app first).
+not your real AppData), `npm run dist` (rebuilds native + builds the exe — close the app first).
 
 Stack is Electron 42.6.1, Vite, React 19, TypeScript, better-sqlite3, Tailwind 4.
 Electron is pinned because better-sqlite3 didn't have a Windows prebuild for 43
@@ -62,12 +71,15 @@ src/pages/       Dashboard / Problems / Settings
 scripts/         stress-test.ts
 ```
 
-First launch seeds the DB. Delete `%APPDATA%\leetcode-sr\data.db` if you want a
-clean slate. Tests use `LEETCODE_SR_DATA_DIR` so they never touch your real data.
+First launch seeds the DB. Delete `%APPDATA%\leetcode-sr\data.db` (and the
+`-wal` / `-shm` sidecars) if you want a clean slate. Tests use
+`LEETCODE_SR_DATA_DIR` so they never touch your real data.
 
 ## Shipping a new exe
 
 ```bash
+npm run lint
+npm run stress
 npm run dist
 ```
 
@@ -75,6 +87,9 @@ Then on GitHub: **Releases → Create a new release → tag it (e.g. v1.0.1) →
 upload both `release/LeetCode-Spaced-Repetition.exe` and
 `release/LeetCode-Spaced-Repetition-win-x64.zip` → Publish**. Don't commit the
 `release/` folder into the repo.
+
+Checklist: zip first in README, Electron still 42.6.1, smoke-open the unpacked
+exe once, confirm `%APPDATA%\leetcode-sr\data.backup.db` refreshes after quit.
 
 ## Don't commit these
 

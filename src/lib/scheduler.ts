@@ -1,7 +1,7 @@
 import { db } from './db'
 import { getSetting, setSetting, getNumberSetting, getGoalDate } from './settings'
 import { todayStr, addDays, daysUntil, nowISO, daysBetween } from './dates'
-import { recordUndo, snapshotProblem } from './undo'
+import { recordUndo, snapshotProblem, snapshotTopicStats } from './undo'
 import type { Problem, Rating } from './types'
 
 const BASE_SCORE: Record<Rating, number> = {
@@ -348,6 +348,7 @@ export function applyReview(
 
   const duringBootstrap = getSetting('bootstrap_active') === '1'
   const today = todayStr()
+  const topicBefore = p.is_excluded ? null : snapshotTopicStats(p.topic)
   const tx = db.transaction(() => {
     db.prepare(
       'INSERT INTO review_log (problem_id, reviewed_at, rating, hints, interval_after) VALUES (?, ?, ?, ?, ?)',
@@ -385,6 +386,7 @@ export function applyReview(
     assignmentId: null,
     topic: p.topic,
     rating,
+    topicBefore,
   })
 
   isBootstrapActive()
@@ -416,6 +418,7 @@ export function markDone(
   const duringBootstrap = getSetting('bootstrap_active') === '1'
   const today = todayStr()
   const nextAt = scheduleNextReviewAt(problemId, today, srInterval, duringBootstrap)
+  const topicBefore = p.is_excluded ? null : snapshotTopicStats(p.topic)
 
   const tx = db.transaction(() => {
     db.prepare(
@@ -442,6 +445,7 @@ export function markDone(
     assignmentId: null,
     topic: p.topic,
     rating,
+    topicBefore,
   })
   return srInterval
 }

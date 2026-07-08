@@ -85,7 +85,7 @@ export default function Settings() {
   const validateGoalDateText = (raw: string): string | null => {
     const parsed = parseGoalDateInput(raw)
     if (!parsed) {
-      setGoalDateError('Use YYYY-MM-DD or MM/DD/YYYY, after today')
+      setGoalDateError('Use YYYY-MM-DD or MM/DD/YYYY (today or later)')
       return null
     }
     setGoalDateError(null)
@@ -115,7 +115,7 @@ export default function Settings() {
   const handleSave = (): void => {
     const parsed = parseGoalDateInput(goalDateText)
     if (!parsed) {
-      setGoalDateError('Use YYYY-MM-DD or MM/DD/YYYY, after today')
+      setGoalDateError('Use YYYY-MM-DD or MM/DD/YYYY (today or later)')
       return
     }
     const toSave: AppSettings = { ...draft, goal_date: parsed }
@@ -144,7 +144,8 @@ export default function Settings() {
         </div>
         <p className="mb-3 text-xs text-gray-500">
           Target date to master every problem in the Kept section — drives the
-          review + new-problem pacing and the on-track message
+          review + new-problem pacing and the on-track message. Today is allowed
+          if you already passed an older goal.
         </p>
         <input
           type="text"

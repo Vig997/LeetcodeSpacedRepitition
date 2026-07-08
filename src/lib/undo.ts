@@ -16,6 +16,16 @@ export interface ProblemUndoSnapshot {
   repetitions: number
 }
 
+export interface TopicStatsUndoSnapshot {
+  last_visited_at: string | null
+  visit_count: number
+  struggle_score: number
+  easy_count: number
+  medium_count: number
+  hard_count: number
+  forgot_count: number
+}
+
 export interface UndoEntry {
   problemId: number
   /** True when this rating was the first completion (Mark Done / Today · New). */
@@ -23,6 +33,8 @@ export interface UndoEntry {
   /** True when the problem was in the bootstrap pool before this rating. */
   wasBootstrap: boolean
   before: ProblemUndoSnapshot
+  /** Topic stats before the rating (null if problem was excluded / no stats row). */
+  topicBefore: TopicStatsUndoSnapshot | null
   assignmentId: number | null
   topic: string
   rating: Rating
@@ -46,9 +58,13 @@ function hydrate(): void {
   const raw = getSetting(UNDO_KEY)
   if (!raw) return
   try {
-    const entry = JSON.parse(raw) as UndoEntry
+    const entry = JSON.parse(raw) as Partial<UndoEntry>
     if (entry && entry.day === todayStr() && typeof entry.problemId === 'number') {
-      lastUndo = entry
+      // Older persisted undos may lack topicBefore — still allow problem rollback.
+      lastUndo = {
+        ...(entry as UndoEntry),
+        topicBefore: entry.topicBefore ?? null,
+      }
     } else {
       setSetting(UNDO_KEY, '')
     }
@@ -86,6 +102,22 @@ export function snapshotProblem(p: Problem): ProblemUndoSnapshot {
   }
 }
 
+export function snapshotTopicStats(topic: string): TopicStatsUndoSnapshot | null {
+  const row = db
+    .prepare('SELECT * FROM topic_stats WHERE topic = ?')
+    .get(topic) as TopicStatsUndoSnapshot | undefined
+  if (!row) return null
+  return {
+    last_visited_at: row.last_visited_at,
+    visit_count: row.visit_count,
+    struggle_score: row.struggle_score,
+    easy_count: row.easy_count,
+    medium_count: row.medium_count,
+    hard_count: row.hard_count,
+    forgot_count: row.forgot_count,
+  }
+}
+
 export function recordUndo(entry: Omit<UndoEntry, 'day'>): void {
   hydrate()
   lastUndo = { ...entry, day: todayStr() }
@@ -104,7 +136,7 @@ export function setLastUndoAssignmentId(assignmentId: number): void {
 /**
  * Revert the most recent rating / mark-done (same calendar day, survives restart).
  * Restores problem fields, deletes the last review_log row, unchecks Today
- * assignment if it was checked by that action, and rolls topic_stats back one step.
+ * assignment if it was checked by that action, and restores topic_stats.
  */
 export function undoLastRating(): { ok: boolean; message: string } {
   hydrate()
@@ -178,20 +210,45 @@ export function undoLastRating(): { ok: boolean; message: string } {
       setSetting('bootstrap_complete', '0')
     }
 
-    const col =
-      entry.rating === 'easy'
-        ? 'easy_count'
-        : entry.rating === 'medium'
-          ? 'medium_count'
-          : entry.rating === 'hard'
-            ? 'hard_count'
-            : 'forgot_count'
-    db.prepare(
-      `UPDATE topic_stats SET
-        visit_count = MAX(visit_count - 1, 0),
-        ${col} = MAX(${col} - 1, 0)
-       WHERE topic = ?`,
-    ).run(entry.topic)
+    if (entry.topicBefore) {
+      const t = entry.topicBefore
+      db.prepare(
+        `UPDATE topic_stats SET
+          last_visited_at = ?,
+          visit_count = ?,
+          struggle_score = ?,
+          easy_count = ?,
+          medium_count = ?,
+          hard_count = ?,
+          forgot_count = ?
+         WHERE topic = ?`,
+      ).run(
+        t.last_visited_at,
+        t.visit_count,
+        t.struggle_score,
+        t.easy_count,
+        t.medium_count,
+        t.hard_count,
+        t.forgot_count,
+        entry.topic,
+      )
+    } else {
+      // Legacy undo without topic snapshot — decrement counts only.
+      const col =
+        entry.rating === 'easy'
+          ? 'easy_count'
+          : entry.rating === 'medium'
+            ? 'medium_count'
+            : entry.rating === 'hard'
+              ? 'hard_count'
+              : 'forgot_count'
+      db.prepare(
+        `UPDATE topic_stats SET
+          visit_count = MAX(visit_count - 1, 0),
+          ${col} = MAX(${col} - 1, 0)
+         WHERE topic = ?`,
+      ).run(entry.topic)
+    }
   })
   tx()
 

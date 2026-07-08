@@ -11,17 +11,35 @@ app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
 app.commandLine.appendSwitch('disable-logging')
 app.commandLine.appendSwitch('log-level', '3')
 
-function backupAppDataDb(): void {
+/**
+ * Fallback when the renderer never checkpointed (crash / force-kill / hook miss).
+ * Copies data.db plus WAL sidecars so restore can use a consistent set.
+ */
+function backupAppDataDbFallback(): void {
   try {
     const appData = process.env.APPDATA ?? path.join(os.homedir(), 'AppData', 'Roaming')
     const dataDir = path.join(appData, 'leetcode-sr')
     const dbPath = path.join(dataDir, 'data.db')
     if (!fs.existsSync(dbPath)) return
     fs.copyFileSync(dbPath, path.join(dataDir, 'data.backup.db'))
+    for (const side of ['-wal', '-shm'] as const) {
+      const src = dbPath + side
+      const dest = path.join(dataDir, `data.backup.db${side}`)
+      if (fs.existsSync(src)) fs.copyFileSync(src, dest)
+      else {
+        try {
+          fs.unlinkSync(dest)
+        } catch {
+          /* none */
+        }
+      }
+    }
   } catch {
     /* best-effort */
   }
 }
+
+let rendererBackupDone = false
 
 // One window only — two instances on the same SQLite file risk locks/corruption.
 const gotLock = app.requestSingleInstanceLock()
@@ -37,9 +55,8 @@ if (!gotLock) {
 
   app.whenReady().then(createWindow)
 
-  // Fresh backup on quit after the session may have mutated the DB.
   app.on('before-quit', () => {
-    backupAppDataDb()
+    if (!rendererBackupDone) backupAppDataDbFallback()
   })
 
   app.on('window-all-closed', () => {
@@ -109,6 +126,45 @@ function createWindow(): void {
     }
     event.preventDefault()
     openExternalHttp(url)
+  })
+
+  // Renderer owns WAL-safe backup; main falls back if the hook is missing/fails.
+  win.on('close', (event) => {
+    if (rendererBackupDone) return
+    event.preventDefault()
+    const timer = setTimeout(() => {
+      if (!rendererBackupDone) {
+        backupAppDataDbFallback()
+        rendererBackupDone = true
+        if (!win.isDestroyed()) win.destroy()
+      }
+    }, 2500)
+    win.webContents
+      .executeJavaScript(
+        `(async () => {
+          try {
+            if (typeof window.__leetcodeSrCloseDb === 'function') {
+              await window.__leetcodeSrCloseDb();
+              return 'ok';
+            }
+            return 'missing';
+          } catch {
+            return 'err';
+          }
+        })()`,
+      )
+      .then((result) => {
+        clearTimeout(timer)
+        if (result !== 'ok') backupAppDataDbFallback()
+        rendererBackupDone = true
+        if (!win.isDestroyed()) win.destroy()
+      })
+      .catch(() => {
+        clearTimeout(timer)
+        backupAppDataDbFallback()
+        rendererBackupDone = true
+        if (!win.isDestroyed()) win.destroy()
+      })
   })
 
   if (process.env.VITE_DEV_SERVER_URL) {

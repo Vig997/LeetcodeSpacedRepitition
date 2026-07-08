@@ -32,7 +32,10 @@ export function daysUntil(dateStr: string): number {
   return Math.max(daysBetween(todayStr(), dateStr), 0)
 }
 
-/** Parse YYYY-MM-DD or MM/DD/YYYY into canonical YYYY-MM-DD, or null if invalid. */
+/**
+ * Parse YYYY-MM-DD or MM/DD/YYYY into canonical YYYY-MM-DD, or null if invalid.
+ * Past dates are allowed (user may have missed the goal and needs to re-set pacing).
+ */
 export function parseGoalDateInput(raw: string): string | null {
   const trimmed = raw.trim()
   let y: number
@@ -55,9 +58,7 @@ export function parseGoalDateInput(raw: string): string | null {
   const dt = new Date(y, m - 1, d)
   if (dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d) return null
 
-  const canonical = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
-  if (daysBetween(todayStr(), canonical) <= 0) return null
-  return canonical
+  return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
 }
 
 export function formatDisplayDate(dateStr: string): string {
