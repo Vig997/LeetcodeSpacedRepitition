@@ -1,0 +1,17 @@
+{
+  "appId": "com.vig.leetcode-sr",
+  "productName": "LeetCode - Spaced Repetition",
+  "directories": {
+    "output": "release",
+    "buildResources": "build"
+  },
+  "files": ["dist/**", "dist-electron/**"],
+  "asarUnpack": ["**/*.node"],
+  "win": {
+    "icon": "build/icon.ico",
+    "target": ["portable", "dir"]
+  },
+  "portable": {
+    "artifactName": "LeetCode-Spaced-Repetition.exe"
+  }
+}
