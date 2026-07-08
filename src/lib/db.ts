@@ -2,36 +2,31 @@ import Database from 'better-sqlite3'
 import path from 'node:path'
 import fs from 'node:fs'
 import os from 'node:os'
-// Import process as a module binding — Vite statically replaces the global
-// `process.env` with {} in renderer builds, which would bake env to undefined.
 import proc from 'node:process'
 
 const appData =
   proc.env.APPDATA ?? path.join(os.homedir(), 'AppData', 'Roaming')
-// LEETCODE_SR_DATA_DIR is a test-only override
 const dataDir = proc.env.LEETCODE_SR_DATA_DIR ?? path.join(appData, 'leetcode-sr')
 fs.mkdirSync(dataDir, { recursive: true })
 
 export const DB_PATH = path.join(dataDir, 'data.db')
 
-/**
- * Rolling copy of the previous session's DB (before this launch opens it).
- * Skipped under LEETCODE_SR_DATA_DIR so stress tests never touch AppData backups.
- * Restore: close the app, copy data.backup.db → data.db.
- */
-function backupUserDb(): void {
+export function backupUserDb(): void {
   if (proc.env.LEETCODE_SR_DATA_DIR) return
   if (!fs.existsSync(DB_PATH)) return
   try {
     fs.copyFileSync(DB_PATH, path.join(dataDir, 'data.backup.db'))
   } catch {
-    /* best-effort; never block launch */
+    /* best-effort */
   }
 }
-backupUserDb()
+
+// Do not block first paint on a full DB file copy.
+setImmediate(backupUserDb)
 
 export const db = new Database(DB_PATH)
 db.pragma('journal_mode = WAL')
+db.pragma('synchronous = NORMAL')
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS problems (

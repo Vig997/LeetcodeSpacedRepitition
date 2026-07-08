@@ -8,22 +8,23 @@ stays on your PC in SQLite. No cloud, no login.
 
 ## Download (Windows)
 
-**[⬇ Download LeetCode-Spaced-Repetition.exe](https://github.com/Vig997/LeetcodeSpacedRepitition/releases/latest/download/LeetCode-Spaced-Repetition.exe)**
+**Recommended (faster every day):** download the zip, unzip once, run the exe inside.  
+**[⬇ LeetCode-Spaced-Repetition-win-x64.zip](https://github.com/Vig997/LeetcodeSpacedRepitition/releases/latest/download/LeetCode-Spaced-Repetition-win-x64.zip)**
 
-Just click that, run the exe, and you're in. First open can be a little slow
-while it unpacks; after that it's fine. Your progress is saved under
-`%APPDATA%\leetcode-sr\` (not next to the exe), so re-downloading won't wipe
-anything. There's also a `data.backup.db` copy in that same folder.
+**One-file portable** (simpler, but unpacks on every launch so it feels slower):  
+**[⬇ LeetCode-Spaced-Repetition.exe](https://github.com/Vig997/LeetcodeSpacedRepitition/releases/latest/download/LeetCode-Spaced-Repetition.exe)**
 
-If you're developing locally, `release/win-unpacked/` starts faster than the
-portable single-file build.
+Progress lives in `%APPDATA%\leetcode-sr\` (not next to the exe), so
+re-downloading won't wipe anything. Closing the app refreshes `data.backup.db`
+in that folder — if something goes wrong, close the app and copy
+`data.backup.db` over `data.db`.
 
 ## What you can do
 
 - **Dashboard** — rings for Kept NeetCode + custom bonus problems, a "are you
   on track for your goal?" message, and Today · Reviews / Today · New. Check a
   row, rate it (Easy / Medium / Hard / Forgot + hints), done. There's an
-  **Undo rating** button if you misclick (same session only).
+  **Undo rating** button if you misclick (saved for the same calendar day even if you close the app).
 - **Bootstrap (optional)** — if you already finished a bunch of problems, you
   can baseline-review them at a daily cap before adding new ones. Or skip it
   and just start from scratch.
@@ -70,8 +71,9 @@ clean slate. Tests use `LEETCODE_SR_DATA_DIR` so they never touch your real data
 npm run dist
 ```
 
-Then on GitHub: **Releases → Create a new release → tag it (e.g. v1.0.0) →
-upload `release/LeetCode-Spaced-Repetition.exe` → Publish**. Don't commit the
+Then on GitHub: **Releases → Create a new release → tag it (e.g. v1.0.1) →
+upload both `release/LeetCode-Spaced-Repetition.exe` and
+`release/LeetCode-Spaced-Repetition-win-x64.zip` → Publish**. Don't commit the
 `release/` folder into the repo.
 
 ## Don't commit these

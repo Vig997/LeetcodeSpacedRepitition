@@ -1,10 +1,13 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import Dashboard from './pages/Dashboard'
-import Problems from './pages/Problems'
 import Settings from './pages/Settings'
 import BootstrapBadge from './components/BootstrapBadge'
 import { useProblems } from './hooks/useProblems'
 import { checkDayRollover, undoLastRating } from './lib/dataStore'
+
+// Problems tab is the heavy list — load on first open. Settings stays mounted
+// (hidden) so draft slider state isn't lost when you switch tabs.
+const Problems = lazy(() => import('./pages/Problems'))
 
 type Tab = 'dashboard' | 'problems' | 'settings'
 
@@ -66,7 +69,11 @@ export default function App() {
       </header>
 
       {tab === 'dashboard' && <Dashboard />}
-      {tab === 'problems' && <Problems />}
+      {tab === 'problems' && (
+        <Suspense fallback={<p className="text-sm text-gray-500">Loading…</p>}>
+          <Problems />
+        </Suspense>
+      )}
       <div className={tab === 'settings' ? undefined : 'hidden'}>
         <Settings />
       </div>

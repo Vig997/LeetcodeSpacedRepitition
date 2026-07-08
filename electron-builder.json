@@ -9,7 +9,14 @@
   "asarUnpack": ["**/*.node"],
   "win": {
     "icon": "build/icon.ico",
-    "target": ["portable", "dir"]
+    "target": [
+      "portable",
+      {
+        "target": "zip",
+        "arch": ["x64"]
+      }
+    ],
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}"
   },
   "portable": {
     "artifactName": "LeetCode-Spaced-Repetition.exe"

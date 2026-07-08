@@ -26,15 +26,49 @@ export interface UndoEntry {
   assignmentId: number | null
   topic: string
   rating: Rating
+  /** Calendar day the undo was recorded (YYYY-MM-DD). */
+  day: string
 }
 
+const UNDO_KEY = 'last_undo_json'
+
 let lastUndo: UndoEntry | null = null
+let hydrated = false
+
+function persist(): void {
+  if (lastUndo) setSetting(UNDO_KEY, JSON.stringify(lastUndo))
+  else setSetting(UNDO_KEY, '')
+}
+
+function hydrate(): void {
+  if (hydrated) return
+  hydrated = true
+  const raw = getSetting(UNDO_KEY)
+  if (!raw) return
+  try {
+    const entry = JSON.parse(raw) as UndoEntry
+    if (entry && entry.day === todayStr() && typeof entry.problemId === 'number') {
+      lastUndo = entry
+    } else {
+      setSetting(UNDO_KEY, '')
+    }
+  } catch {
+    setSetting(UNDO_KEY, '')
+  }
+}
 
 export function clearUndo(): void {
+  hydrate()
   lastUndo = null
+  persist()
 }
 
 export function hasUndo(): boolean {
+  hydrate()
+  if (lastUndo && lastUndo.day !== todayStr()) {
+    lastUndo = null
+    persist()
+  }
   return lastUndo !== null
 }
 
@@ -52,26 +86,36 @@ export function snapshotProblem(p: Problem): ProblemUndoSnapshot {
   }
 }
 
-export function recordUndo(entry: UndoEntry): void {
-  lastUndo = entry
+export function recordUndo(entry: Omit<UndoEntry, 'day'>): void {
+  hydrate()
+  lastUndo = { ...entry, day: todayStr() }
+  persist()
 }
 
 /** Attach the Today assignment id after checkAssignment (Dashboard path). */
 export function setLastUndoAssignmentId(assignmentId: number): void {
-  if (lastUndo) lastUndo.assignmentId = assignmentId
+  hydrate()
+  if (lastUndo) {
+    lastUndo.assignmentId = assignmentId
+    persist()
+  }
 }
 
 /**
- * Revert the most recent rating / mark-done in this session.
+ * Revert the most recent rating / mark-done (same calendar day, survives restart).
  * Restores problem fields, deletes the last review_log row, unchecks Today
  * assignment if it was checked by that action, and rolls topic_stats back one step.
  */
 export function undoLastRating(): { ok: boolean; message: string } {
-  if (!lastUndo) {
+  hydrate()
+  if (!lastUndo || lastUndo.day !== todayStr()) {
+    lastUndo = null
+    persist()
     return { ok: false, message: 'Nothing to undo' }
   }
   const entry = lastUndo
   lastUndo = null
+  persist()
 
   const p = db
     .prepare('SELECT * FROM problems WHERE id = ?')
@@ -129,7 +173,6 @@ export function undoLastRating(): { ok: boolean; message: string } {
       ).run(todayStr(), entry.problemId)
     }
 
-    // If this rating emptied the bootstrap pool, restore active flags.
     if (entry.wasBootstrap && getSetting('bootstrap_active') !== '1') {
       setSetting('bootstrap_active', '1')
       setSetting('bootstrap_complete', '0')

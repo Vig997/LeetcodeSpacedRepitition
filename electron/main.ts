@@ -1,8 +1,27 @@
 import { app, BrowserWindow, shell, nativeImage } from 'electron'
 import path from 'node:path'
+import fs from 'node:fs'
+import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+
+// Faster cold start: skip Chromium logging we don't need.
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
+app.commandLine.appendSwitch('disable-logging')
+app.commandLine.appendSwitch('log-level', '3')
+
+function backupAppDataDb(): void {
+  try {
+    const appData = process.env.APPDATA ?? path.join(os.homedir(), 'AppData', 'Roaming')
+    const dataDir = path.join(appData, 'leetcode-sr')
+    const dbPath = path.join(dataDir, 'data.db')
+    if (!fs.existsSync(dbPath)) return
+    fs.copyFileSync(dbPath, path.join(dataDir, 'data.backup.db'))
+  } catch {
+    /* best-effort */
+  }
+}
 
 // One window only — two instances on the same SQLite file risk locks/corruption.
 const gotLock = app.requestSingleInstanceLock()
@@ -18,13 +37,17 @@ if (!gotLock) {
 
   app.whenReady().then(createWindow)
 
+  // Fresh backup on quit after the session may have mutated the DB.
+  app.on('before-quit', () => {
+    backupAppDataDb()
+  })
+
   app.on('window-all-closed', () => {
     app.quit()
   })
 }
 
 function resolveIcon(): string | undefined {
-  // Packaged: beside resources; dev: repo build/icon.ico
   const candidates = [
     path.join(process.resourcesPath ?? '', 'icon.ico'),
     path.join(__dirname, '../build/icon.ico'),
@@ -51,16 +74,21 @@ function createWindow(): void {
     backgroundColor: '#0b0e14',
     autoHideMenuBar: true,
     title: 'LeetCode - Spaced Repetition',
+    show: false,
     ...(icon ? { icon } : {}),
     webPreferences: {
-      // Personal offline tool: renderer talks to SQLite directly.
       nodeIntegration: true,
       contextIsolation: false,
       sandbox: false,
+      backgroundThrottling: false,
+      spellcheck: false,
     },
   })
 
-  // LeetCode (and other http/https) links open in the default browser — never in-app.
+  win.once('ready-to-show', () => {
+    win.show()
+  })
+
   const openExternalHttp = (url: string): void => {
     try {
       const u = new URL(url)
@@ -76,7 +104,6 @@ function createWindow(): void {
     return { action: 'deny' }
   })
   win.webContents.on('will-navigate', (event, url) => {
-    // Keep the app on its own pages; send anything else outside.
     if (url.startsWith('file:') || url.startsWith(process.env.VITE_DEV_SERVER_URL ?? 'vite-never')) {
       return
     }
