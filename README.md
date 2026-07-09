@@ -8,10 +8,14 @@ stays on your PC in SQLite. No cloud, no login.
 
 ## Download (Windows)
 
-**Recommended (faster every day):** download the zip, unzip once, run the exe inside.  
+**Auto-updates (recommended):** run the Setup installer once. The app checks GitHub
+for new releases on launch and installs updates when you quit.  
+**[⬇ LeetCode-Spaced-Repetition-Setup (latest release)](https://github.com/Vig997/LeetcodeSpacedRepitition/releases/latest)**
+
+**Manual install (no auto-update):** download the zip, unzip once, run the exe inside.  
 **[⬇ LeetCode-Spaced-Repetition-win-x64.zip](https://github.com/Vig997/LeetcodeSpacedRepitition/releases/latest/download/LeetCode-Spaced-Repetition-win-x64.zip)**
 
-**One-file portable** (simpler, but unpacks on every launch so it feels slower):  
+**One-file portable** (simpler, but unpacks on every launch so it feels slower; no auto-update):  
 **[⬇ LeetCode-Spaced-Repetition.exe](https://github.com/Vig997/LeetcodeSpacedRepitition/releases/latest/download/LeetCode-Spaced-Repetition.exe)**
 
 **Download looks empty or won't open?**
@@ -69,6 +73,32 @@ npm run dev
 Other scripts: `npm run lint`, `npm run stress` (fake ~75 days in a temp folder,
 not your real AppData), `npm run dist` (rebuilds native + builds the exe — close the app first).
 
+## Updating the app
+
+**Daily use:** launch from the Desktop shortcut **LeetCode SR** (or Start menu).
+
+**After you change code on this machine (local dev install):**
+
+1. Close LeetCode SR if it is open.
+2. Double-click **`Update LeetCode SR.bat`** in the repo root.
+   - Pulls latest git changes (if this folder is a git repo).
+   - Rebuilds and recopies to `%LOCALAPPDATA%\LeetCode-SR\`.
+   - Refreshes Desktop / Start menu shortcuts.
+3. Reopen from the Desktop shortcut.
+
+First-time local install: double-click **`Install LeetCode SR.bat`** instead.
+
+Your progress in `%APPDATA%\leetcode-sr\` is never touched by reinstall or update.
+
+**After you publish a GitHub release (for Setup-install users):**
+
+1. Bump `"version"` in `package.json` (must match the release tag, e.g. `1.2.0` → tag `v1.2.0`).
+2. Commit, push, and create the tag: `git tag v1.2.0 && git push origin v1.2.0`.
+3. GitHub Actions builds and publishes the release assets automatically.
+4. Users who installed via **Setup** get a prompt on next launch; the update installs when they quit (or immediately if they choose **Restart now**).
+
+Zip and portable downloads do **not** auto-update — those users re-download from Releases.
+
 Stack is Electron 42.6.1, Vite, React 19, TypeScript, better-sqlite3, Tailwind 4.
 Electron is pinned because better-sqlite3 didn't have a Windows prebuild for 43
 when I shipped this.
@@ -87,21 +117,34 @@ First launch seeds the DB. Delete `%APPDATA%\leetcode-sr\data.db` (and the
 `-wal` / `-shm` sidecars) if you want a clean slate. Tests use
 `LEETCODE_SR_DATA_DIR` so they never touch your real data.
 
-## Shipping a new exe
+## Shipping a new release
 
 ```bash
 npm run lint
 npm run stress
+# bump version in package.json first
+git tag v1.2.0
+git push origin v1.2.0
+```
+
+GitHub Actions (`.github/workflows/release.yml`) runs lint, build, and
+`electron-builder --publish always` on tag push. It uploads:
+
+- `LeetCode-Spaced-Repetition-Setup-<version>.exe` — **auto-update** (NSIS)
+- `LeetCode-Spaced-Repetition-win-x64.zip` — manual install
+- `LeetCode-Spaced-Repetition.exe` — portable, manual only
+
+You can also trigger the workflow manually from the Actions tab.
+
+Local-only build without publishing:
+
+```bash
 npm run dist
 ```
 
-Then on GitHub: **Releases → Create a new release → tag it (e.g. v1.0.1) →
-upload both `release/LeetCode-Spaced-Repetition.exe` and
-`release/LeetCode-Spaced-Repetition-win-x64.zip` → Publish**. Don't commit the
-`release/` folder into the repo.
-
-Checklist: zip first in README, Electron still 42.6.1, smoke-open the unpacked
-exe once, confirm `%APPDATA%\leetcode-sr\data.backup.db` refreshes after quit.
+Checklist: tag matches `package.json` version, Electron still 42.6.1, smoke-open
+the Setup or unpacked exe once, confirm `%APPDATA%\leetcode-sr\data.backup.db`
+refreshes after quit.
 
 ## Don't commit these
 

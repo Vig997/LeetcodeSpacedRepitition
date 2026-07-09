@@ -7,9 +7,15 @@
   },
   "files": ["dist/**", "dist-electron/**"],
   "asarUnpack": ["**/*.node"],
+  "publish": {
+    "provider": "github",
+    "owner": "Vig997",
+    "repo": "LeetcodeSpacedRepitition"
+  },
   "win": {
     "icon": "build/icon.ico",
     "target": [
+      "nsis",
       "portable",
       {
         "target": "zip",
@@ -17,6 +23,12 @@
       }
     ],
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}"
+  },
+  "nsis": {
+    "oneClick": true,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": false,
+    "artifactName": "LeetCode-Spaced-Repetition-Setup-${version}.${ext}"
   },
   "portable": {
     "artifactName": "LeetCode-Spaced-Repetition.exe"

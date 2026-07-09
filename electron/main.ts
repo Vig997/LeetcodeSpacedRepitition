@@ -1,4 +1,5 @@
-import { app, BrowserWindow, shell, nativeImage } from 'electron'
+import { app, BrowserWindow, shell, nativeImage, dialog } from 'electron'
+import { autoUpdater } from 'electron-updater'
 import path from 'node:path'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -53,7 +54,9 @@ if (!gotLock) {
     win.focus()
   })
 
-  app.whenReady().then(createWindow)
+  app.whenReady().then(() => {
+    createWindow()
+  })
 
   app.on('before-quit', () => {
     if (!rendererBackupDone) backupAppDataDbFallback()
@@ -81,6 +84,52 @@ function resolveIcon(): string | undefined {
   return undefined
 }
 
+function shouldCheckForUpdates(): boolean {
+  if (!app.isPackaged || process.env.VITE_DEV_SERVER_URL) return false
+  const localDevMarker = path.join(path.dirname(process.execPath), '.local-dev-install')
+  return !fs.existsSync(localDevMarker)
+}
+
+function setupAutoUpdater(win: BrowserWindow): void {
+  if (!shouldCheckForUpdates()) return
+
+  autoUpdater.autoDownload = true
+  autoUpdater.autoInstallOnAppQuit = true
+
+  autoUpdater.on('update-available', () => {
+    void dialog.showMessageBox(win, {
+      type: 'info',
+      title: 'Update available',
+      message: 'A new version is downloading in the background.',
+      detail: 'Restart the app after quitting to install the update.',
+      buttons: ['OK'],
+    })
+  })
+
+  autoUpdater.on('update-downloaded', () => {
+    void dialog
+      .showMessageBox(win, {
+        type: 'info',
+        title: 'Update ready',
+        message: 'An update has been downloaded.',
+        detail: 'Quit and reopen the app to install, or restart now.',
+        buttons: ['Later', 'Restart now'],
+        defaultId: 1,
+      })
+      .then(({ response }) => {
+        if (response === 1) autoUpdater.quitAndInstall(false, true)
+      })
+  })
+
+  autoUpdater.on('error', (err) => {
+    console.error('Auto-update error:', err.message)
+  })
+
+  void autoUpdater.checkForUpdates().catch((err: Error) => {
+    console.error('Update check failed:', err.message)
+  })
+}
+
 function createWindow(): void {
   const icon = resolveIcon()
   const win = new BrowserWindow({
@@ -104,6 +153,7 @@ function createWindow(): void {
 
   win.once('ready-to-show', () => {
     win.show()
+    setupAutoUpdater(win)
   })
 
   const openExternalHttp = (url: string): void => {
