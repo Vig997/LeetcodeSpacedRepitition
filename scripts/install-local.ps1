@@ -12,6 +12,29 @@ $ExeName = 'LeetCode - Spaced Repetition.exe'
 $SourceDir = Join-Path $RepoRoot 'release\win-unpacked'
 $ExePath = Join-Path $InstallDir $ExeName
 
+function Ensure-NodePath {
+  if (Get-Command npm -ErrorAction SilentlyContinue) { return }
+
+  $candidates = @(
+    (Join-Path ${env:ProgramFiles} 'nodejs'),
+    (Join-Path ${env:ProgramFiles(x86)} 'nodejs'),
+    (Join-Path $env:LOCALAPPDATA 'Programs\node')
+  )
+  foreach ($dir in $candidates) {
+    if (Test-Path (Join-Path $dir 'npm.cmd')) {
+      $env:Path = "$dir;$env:Path"
+      return
+    }
+  }
+
+  throw @"
+Node.js/npm not found in PATH.
+
+Install Node.js from https://nodejs.org (LTS), then run this script again.
+Or run from Cursor's terminal: npm run dist
+"@
+}
+
 function Stop-LeetCodeSr {
   $procs = Get-Process -Name 'LeetCode - Spaced Repetition' -ErrorAction SilentlyContinue
   if (-not $procs) { return }
@@ -33,6 +56,7 @@ Stop-LeetCodeSr
 
 if (-not $SkipBuild) {
   Write-Host 'Building app...'
+  Ensure-NodePath
   npm run dist
 }
 
