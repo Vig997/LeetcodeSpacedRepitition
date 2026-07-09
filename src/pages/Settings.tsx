@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useProblems } from '../hooks/useProblems'
-import { previewGoal, saveSettings } from '../lib/dataStore'
-import GoalReachability from '../components/GoalReachability'
+import { saveSettings } from '../lib/dataStore'
 import { parseGoalDateInput } from '../lib/dates'
 import { SETTINGS_MAX } from '../lib/settings'
 import type { AppSettings } from '../lib/types'
@@ -70,8 +69,6 @@ export default function Settings() {
     }
   }, [dirty, saved])
 
-  const liveGoal = previewGoal(draft)
-
   const markDirty = (next: AppSettings): void => {
     setDraft(next)
     setDirty(!settingsEqual(next, saved))
@@ -130,14 +127,13 @@ export default function Settings() {
     <div className="mx-auto max-w-2xl space-y-5">
       {hasChanges && (
         <div className="rounded-lg border border-amber-800/60 bg-amber-950/40 px-4 py-2 text-sm text-amber-300">
-          Unsaved changes — press Save to apply
+          Unsaved Changes — Press Save to Apply
         </div>
       )}
-      <GoalReachability goal={liveGoal} />
 
       <div className="rounded-xl border border-gray-800 bg-gray-900/60 p-5">
         <div className="mb-1 flex items-baseline justify-between">
-          <span className="text-sm font-medium text-gray-200">Goal date</span>
+          <span className="text-sm font-medium text-gray-200">Goal Date</span>
           <span className="rounded-md bg-gray-800 px-2.5 py-0.5 text-sm font-semibold text-sky-300">
             {draft.goal_date}
           </span>
@@ -167,7 +163,7 @@ export default function Settings() {
       </div>
 
       <SettingSlider
-        label="New problems per day"
+        label="New Problems Per Day"
         hint="How many undone Kept problems to add daily — Auto derives it from remaining problems ÷ days to goal"
         min={0}
         max={SETTINGS_MAX}
@@ -175,15 +171,15 @@ export default function Settings() {
         {...bind('new_per_day')}
       />
       <SettingSlider
-        label="Daily review target / cap"
+        label="Daily Review Target / Cap"
         hint="Ceiling for spaced-repetition reviews per day"
         min={1}
         max={SETTINGS_MAX}
         {...bind('review_daily_target')}
       />
       <SettingSlider
-        label="Bootstrap reviews per day"
-        hint="Baseline reviews per day when you start a bootstrap from the Dashboard"
+        label="Bootstrap Reviews Per Day"
+        hint="Bootstrap reviews per day when you start a bootstrap from the Dashboard"
         min={1}
         max={SETTINGS_MAX}
         {...bind('bootstrap_daily_cap')}
@@ -195,7 +191,7 @@ export default function Settings() {
         disabled={!canSave}
         className="w-full rounded-xl bg-sky-600 py-3 text-sm font-semibold text-white transition hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-40"
       >
-        Save settings
+        Save Settings
       </button>
     </div>
   )

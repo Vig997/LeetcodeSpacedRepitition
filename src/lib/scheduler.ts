@@ -315,6 +315,7 @@ export function applyReview(
   problemId: number,
   rating: Rating,
   hints: number,
+  opts?: { recordUndo?: boolean },
 ): number {
   const p = db
     .prepare('SELECT * FROM problems WHERE id = ?')
@@ -378,16 +379,18 @@ export function applyReview(
   })
   tx()
 
-  recordUndo({
-    problemId,
-    wasFirstCompletion: false,
-    wasBootstrap,
-    before,
-    assignmentId: null,
-    topic: p.topic,
-    rating,
-    topicBefore,
-  })
+  if (opts?.recordUndo !== false) {
+    recordUndo({
+      problemId,
+      wasFirstCompletion: false,
+      wasBootstrap,
+      before,
+      assignmentId: null,
+      topic: p.topic,
+      rating,
+      topicBefore,
+    })
+  }
 
   isBootstrapActive()
   return srInterval
@@ -401,12 +404,13 @@ export function markDone(
   problemId: number,
   rating: Rating,
   hints: number,
+  opts?: { recordUndo?: boolean },
 ): number {
   const p = db
     .prepare('SELECT * FROM problems WHERE id = ?')
     .get(problemId) as Problem
   if (p.first_completed_at !== null) {
-    return applyReview(problemId, rating, hints)
+    return applyReview(problemId, rating, hints, opts)
   }
   const before = snapshotProblem(p)
   const pressure = currentGoalPressure()
@@ -437,15 +441,17 @@ export function markDone(
   })
   tx()
 
-  recordUndo({
-    problemId,
-    wasFirstCompletion: true,
-    wasBootstrap: false,
-    before,
-    assignmentId: null,
-    topic: p.topic,
-    rating,
-    topicBefore,
-  })
+  if (opts?.recordUndo !== false) {
+    recordUndo({
+      problemId,
+      wasFirstCompletion: true,
+      wasBootstrap: false,
+      before,
+      assignmentId: null,
+      topic: p.topic,
+      rating,
+      topicBefore,
+    })
+  }
   return srInterval
 }

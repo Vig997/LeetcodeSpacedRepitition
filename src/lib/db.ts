@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import proc from 'node:process'
 
-const SCHEMA_VERSION = 2
+const SCHEMA_VERSION = 3
 
 const appData =
   proc.env.APPDATA ?? path.join(os.homedir(), 'AppData', 'Roaming')
@@ -165,15 +165,30 @@ function migrateSchema(): void {
   let current = row ? Number(row.value) : 0
   if (!Number.isFinite(current)) current = 0
 
-  if (current < 2) {
-    const cols = db.pragma('table_info(today_assignments)') as { name: string }[]
-    if (!cols.some((c) => c.name === 'is_extra')) {
-      db.exec(
-        'ALTER TABLE today_assignments ADD COLUMN is_extra INTEGER NOT NULL DEFAULT 0',
-      )
-    }
-    current = 2
+  // Idempotent column adds — run even if schema_version was bumped without columns (repair path).
+  const cols = db.pragma('table_info(today_assignments)') as { name: string }[]
+  const has = (name: string) => cols.some((c) => c.name === name)
+
+  if (!has('is_extra')) {
+    db.exec(
+      'ALTER TABLE today_assignments ADD COLUMN is_extra INTEGER NOT NULL DEFAULT 0',
+    )
+    current = Math.max(current, 2)
   }
+  if (!has('session_rating')) {
+    db.exec('ALTER TABLE today_assignments ADD COLUMN session_rating TEXT')
+    current = Math.max(current, 3)
+  }
+  if (!has('session_hints')) {
+    db.exec('ALTER TABLE today_assignments ADD COLUMN session_hints INTEGER')
+    current = Math.max(current, 3)
+  }
+  if (!has('before_json')) {
+    db.exec('ALTER TABLE today_assignments ADD COLUMN before_json TEXT')
+    current = Math.max(current, 3)
+  }
+
+  current = Math.max(current, SCHEMA_VERSION)
 
   if (!row || Number(row.value) !== SCHEMA_VERSION) {
     db.prepare(

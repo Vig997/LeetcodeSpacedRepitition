@@ -1,12 +1,370 @@
 import { db } from './db'
-import { todayStr, nowISO, addDays } from './dates'
+import { todayStr, nowISO, addDays, localDayFromISO } from './dates'
 import { computePacing } from './pacing'
-import { isBootstrapActive, getBootstrapNewPerDay } from './scheduler'
+import { isBootstrapActive, getBootstrapNewPerDay, applyReview, markDone } from './scheduler'
 import { pickReviews, pickNew, pickBootstrapReviews, roadmapSort } from './topicBalancer'
-import type { Problem, TodayAssignment, AssignmentKind } from './types'
+import { getSetting, setSetting } from './settings'
+import {
+  snapshotProblem,
+  snapshotTopicStats,
+  clearUndo,
+  undoMetaForAssignment,
+  type ProblemUndoSnapshot,
+  type TopicStatsUndoSnapshot,
+} from './undo'
+import type { Problem, TodayAssignment, AssignmentKind, Rating } from './types'
+
+interface ReviewLogRow {
+  id: number
+  problem_id: number
+  reviewed_at: string
+  rating: Rating
+  hints: number
+  interval_after: number
+}
 
 export interface AssignmentWithProblem extends TodayAssignment {
   problem: Problem
+}
+
+/** Stored on assignment check — used to restore state for same-day rating edits. */
+export interface AssignmentBeforeJson {
+  before: ProblemUndoSnapshot
+  topicBefore: TopicStatsUndoSnapshot | null
+  wasFirstCompletion: boolean
+  wasBootstrap: boolean
+}
+
+export interface AssignmentRatingMeta extends AssignmentBeforeJson {
+  sessionRating: Rating
+  sessionHints: number
+}
+
+export function buildAssignmentRatingMeta(
+  p: Problem,
+  rating: Rating,
+  hints: number,
+): AssignmentRatingMeta {
+  return {
+    before: snapshotProblem(p),
+    topicBefore: p.is_excluded ? null : snapshotTopicStats(p.topic),
+    wasFirstCompletion: p.first_completed_at === null,
+    wasBootstrap: p.status === 'bootstrap',
+    sessionRating: rating,
+    sessionHints: hints,
+  }
+}
+
+function beforeJsonPayload(meta: AssignmentBeforeJson): string {
+  return JSON.stringify({
+    before: meta.before,
+    topicBefore: meta.topicBefore,
+    wasFirstCompletion: meta.wasFirstCompletion,
+    wasBootstrap: meta.wasBootstrap,
+  })
+}
+
+function parseStoredMeta(raw: string): AssignmentBeforeJson | null {
+  try {
+    return JSON.parse(raw) as AssignmentBeforeJson
+  } catch {
+    return null
+  }
+}
+
+function sessionDay(row: TodayAssignment): string {
+  return row.rated_at ? localDayFromISO(row.rated_at) : todayStr()
+}
+
+/** Rebuild pre-rating snapshot from review_log when before_json was never stored. */
+function reconstructMetaFromReviewLog(
+  row: TodayAssignment,
+  p: Problem,
+): AssignmentBeforeJson | null {
+  const logs = db
+    .prepare('SELECT * FROM review_log WHERE problem_id = ? ORDER BY id ASC')
+    .all(row.problem_id) as ReviewLogRow[]
+  if (logs.length === 0) return null
+
+  const lastLog = logs[logs.length - 1]
+  const ratedDay = sessionDay(row)
+  const lastLogDay = localDayFromISO(lastLog.reviewed_at)
+  if (lastLogDay !== ratedDay && lastLogDay !== todayStr()) return null
+
+  const priorLogs = logs.slice(0, -1)
+  if (priorLogs.length === 0) {
+    // Already done before today's rating — not a first completion (common for reviews / bootstrap).
+    if (p.first_completed_at !== null) {
+      const wasBootstrap =
+        getSetting('bootstrap_active') === '1' &&
+        p.repetitions <= 1 &&
+        (p.status === 'sr' || p.status === 'mastered')
+      return {
+        before: {
+          status: wasBootstrap ? 'bootstrap' : 'sr',
+          first_completed_at: p.first_completed_at,
+          last_reviewed_at: wasBootstrap ? null : p.first_completed_at,
+          next_review_at: ratedDay,
+          last_rating: null,
+          last_hints: 0,
+          ease: p.ease,
+          interval_days: wasBootstrap ? 0 : Math.max(p.interval_days, 1),
+          repetitions: Math.max(p.repetitions - 1, 0),
+        },
+        topicBefore: null,
+        wasFirstCompletion: false,
+        wasBootstrap,
+      }
+    }
+    return {
+      before: {
+        status: 'undone',
+        first_completed_at: null,
+        last_reviewed_at: null,
+        next_review_at: null,
+        last_rating: null,
+        last_hints: 0,
+        ease: 2.5,
+        interval_days: 0,
+        repetitions: 0,
+      },
+      topicBefore: null,
+      wasFirstCompletion: true,
+      wasBootstrap: false,
+    }
+  }
+
+  const prev = priorLogs[priorLogs.length - 1]
+  const first = priorLogs[0]
+
+  return {
+    before: {
+      status: 'sr',
+      first_completed_at: first.reviewed_at.slice(0, 10),
+      last_reviewed_at: prev.reviewed_at.slice(0, 10),
+      next_review_at: ratedDay,
+      last_rating: prev.rating,
+      last_hints: prev.hints,
+      ease: priorLogs.length === 1 ? 2.5 : p.ease,
+      interval_days: prev.interval_after,
+      repetitions: priorLogs.length,
+    },
+    topicBefore: null,
+    wasFirstCompletion: false,
+    wasBootstrap: false,
+  }
+}
+
+function resolveAssignmentMeta(
+  row: TodayAssignment,
+  p: Problem,
+): { meta: AssignmentBeforeJson | null; message: string } {
+  if (row.before_json) {
+    const meta = parseStoredMeta(row.before_json)
+    if (meta) return { meta, message: '' }
+    return { meta: null, message: 'Could not load saved rating' }
+  }
+
+  const undoMeta = undoMetaForAssignment(row.id)
+  if (undoMeta) return { meta: undoMeta, message: '' }
+
+  const reconstructed = reconstructMetaFromReviewLog(row, p)
+  if (reconstructed) return { meta: reconstructed, message: '' }
+
+  return {
+    meta: null,
+    message: 'Could not restore rating — no snapshot available',
+  }
+}
+
+function restoreTopicStats(
+  topic: string,
+  topicBefore: TopicStatsUndoSnapshot | null,
+  oldRating: Rating,
+): void {
+  if (topicBefore) {
+    const t = topicBefore
+    db.prepare(
+      `UPDATE topic_stats SET
+        last_visited_at = ?,
+        visit_count = ?,
+        struggle_score = ?,
+        easy_count = ?,
+        medium_count = ?,
+        hard_count = ?,
+        forgot_count = ?
+       WHERE topic = ?`,
+    ).run(
+      t.last_visited_at,
+      t.visit_count,
+      t.struggle_score,
+      t.easy_count,
+      t.medium_count,
+      t.hard_count,
+      t.forgot_count,
+      topic,
+    )
+    return
+  }
+  const col =
+    oldRating === 'easy'
+      ? 'easy_count'
+      : oldRating === 'medium'
+        ? 'medium_count'
+        : oldRating === 'hard'
+          ? 'hard_count'
+          : 'forgot_count'
+  db.prepare(
+    `UPDATE topic_stats SET
+      visit_count = MAX(visit_count - 1, 0),
+      ${col} = MAX(${col} - 1, 0)
+     WHERE topic = ?`,
+  ).run(topic)
+}
+
+function restoreBeforeRating(
+  problemId: number,
+  topic: string,
+  meta: AssignmentBeforeJson,
+  oldRating: Rating,
+): void {
+  const lastLog = db
+    .prepare(
+      'SELECT id FROM review_log WHERE problem_id = ? ORDER BY id DESC LIMIT 1',
+    )
+    .get(problemId) as { id: number } | undefined
+  if (lastLog) {
+    db.prepare('DELETE FROM review_log WHERE id = ?').run(lastLog.id)
+  }
+
+  const b = meta.before
+  db.prepare(
+    `UPDATE problems SET
+      status = ?,
+      first_completed_at = ?,
+      last_reviewed_at = ?,
+      next_review_at = ?,
+      last_rating = ?,
+      last_hints = ?,
+      ease = ?,
+      interval_days = ?,
+      repetitions = ?
+     WHERE id = ?`,
+  ).run(
+    b.status,
+    b.first_completed_at,
+    b.last_reviewed_at,
+    b.next_review_at,
+    b.last_rating,
+    b.last_hints,
+    b.ease,
+    b.interval_days,
+    b.repetitions,
+    problemId,
+  )
+
+  if (meta.wasBootstrap && getSetting('bootstrap_active') !== '1') {
+    setSetting('bootstrap_active', '1')
+    setSetting('bootstrap_complete', '0')
+  }
+
+  restoreTopicStats(topic, meta.topicBefore, oldRating)
+}
+
+/** Change rating + hints for a completed Today row (same calendar day only). */
+export function editAssignmentRating(
+  assignmentId: number,
+  rating: Rating,
+  hints: number,
+): { ok: boolean; message: string } {
+  const today = todayStr()
+  const row = db
+    .prepare('SELECT * FROM today_assignments WHERE id = ? AND assignment_date = ?')
+    .get(assignmentId, today) as TodayAssignment | undefined
+
+  if (!row) return { ok: false, message: 'Not on Today anymore' }
+  if (row.checked !== 1) return { ok: false, message: 'Complete the problem first' }
+
+  const p = db
+    .prepare('SELECT * FROM problems WHERE id = ?')
+    .get(row.problem_id) as Problem | undefined
+  if (!p) return { ok: false, message: 'Problem no longer exists' }
+
+  const { meta, message: metaMessage } = resolveAssignmentMeta(row, p)
+  if (!meta) return { ok: false, message: metaMessage }
+
+  const oldRating = (row.session_rating ?? p.last_rating) as Rating | null
+  if (!oldRating) {
+    return { ok: false, message: 'No rating to edit' }
+  }
+
+  try {
+    const tx = db.transaction(() => {
+      restoreBeforeRating(row.problem_id, p.topic, meta, oldRating)
+      if (meta.wasFirstCompletion) {
+        markDone(row.problem_id, rating, hints, { recordUndo: false })
+      } else {
+        applyReview(row.problem_id, rating, hints, { recordUndo: false })
+      }
+      db.prepare(
+        `UPDATE today_assignments SET session_rating = ?, session_hints = ?, rated_at = ?
+         WHERE id = ?`,
+      ).run(rating, hints, nowISO(), assignmentId)
+    })
+    tx()
+  } catch {
+    return { ok: false, message: 'Could not update rating — try again' }
+  }
+
+  clearUndo()
+  isBootstrapActive()
+  return { ok: true, message: 'Rating updated' }
+}
+
+/** Revert a completed Today row to unchecked (same calendar day only). */
+export function uncheckAssignment(assignmentId: number): { ok: boolean; message: string } {
+  const today = todayStr()
+  const row = db
+    .prepare('SELECT * FROM today_assignments WHERE id = ? AND assignment_date = ?')
+    .get(assignmentId, today) as TodayAssignment | undefined
+
+  if (!row) return { ok: false, message: 'Not on Today anymore' }
+  if (row.checked !== 1) return { ok: false, message: 'Not checked off yet' }
+
+  const p = db
+    .prepare('SELECT * FROM problems WHERE id = ?')
+    .get(row.problem_id) as Problem | undefined
+  if (!p) return { ok: false, message: 'Problem no longer exists' }
+
+  const { meta, message: metaMessage } = resolveAssignmentMeta(row, p)
+  if (!meta) return { ok: false, message: metaMessage }
+
+  const lastLog = db
+    .prepare(
+      'SELECT rating FROM review_log WHERE problem_id = ? ORDER BY id DESC LIMIT 1',
+    )
+    .get(row.problem_id) as { rating: Rating } | undefined
+  const oldRating = (row.session_rating ?? p.last_rating ?? lastLog?.rating) as Rating | null
+  if (!oldRating) {
+    return { ok: false, message: 'No rating to revert' }
+  }
+
+  try {
+    const tx = db.transaction(() => {
+      restoreBeforeRating(row.problem_id, p.topic, meta, oldRating)
+      db.prepare(
+        `UPDATE today_assignments SET checked = 0, rated_at = NULL, session_rating = NULL, session_hints = NULL, before_json = NULL
+         WHERE id = ?`,
+      ).run(assignmentId)
+    })
+    tx()
+  } catch {
+    return { ok: false, message: 'Could not uncheck — try again' }
+  }
+
+  clearUndo()
+  isBootstrapActive()
+  return { ok: true, message: 'Unchecked' }
 }
 
 const insertAssignment = db.prepare(
@@ -110,6 +468,53 @@ function todayAssignmentCounts(): { reviews: number; news: number } {
   return { reviews: row.reviews ?? 0, news: row.news ?? 0 }
 }
 
+/** Live Today list counts from DB — includes extras; used after add/remove to reflect real workload. */
+export interface TodayLoadSummary {
+  reviewCount: number
+  newCount: number
+  extraReviewCount: number
+  extraNewCount: number
+  pacedReviewCount: number
+  pacedNewCount: number
+  uncheckedCount: number
+  /** Unchecked rows on Today (paced + extras). */
+  openLoad: number
+}
+
+export function getTodayLoadSummary(): TodayLoadSummary {
+  const rows = db
+    .prepare('SELECT kind, is_extra, checked FROM today_assignments WHERE assignment_date = ?')
+    .all(todayStr()) as Pick<TodayAssignment, 'kind' | 'is_extra' | 'checked'>[]
+
+  let reviewCount = 0
+  let newCount = 0
+  let extraReviewCount = 0
+  let extraNewCount = 0
+  let uncheckedCount = 0
+
+  for (const r of rows) {
+    if (r.kind === 'review') {
+      reviewCount++
+      if (r.is_extra === 1) extraReviewCount++
+    } else {
+      newCount++
+      if (r.is_extra === 1) extraNewCount++
+    }
+    if (r.checked === 0) uncheckedCount++
+  }
+
+  return {
+    reviewCount,
+    newCount,
+    extraReviewCount,
+    extraNewCount,
+    pacedReviewCount: reviewCount - extraReviewCount,
+    pacedNewCount: newCount - extraNewCount,
+    uncheckedCount,
+    openLoad: uncheckedCount,
+  }
+}
+
 export function ensureToday(): void {
   const today = todayStr()
 
@@ -142,11 +547,11 @@ function assignReviewsForToday(): void {
 }
 
 /**
- * Day-lock Today · New:
- * - First assign of the day (no new rows yet) → pick roadmap head up to pacing.newToday.
- * - Once any new rows exist for today → keep that set; finishing one does NOT pull the next.
- * - May trim if over cap (settings lowered); never grow mid-day.
- * Next calendar day starts empty → next roadmap problems.
+ * Day-lock Today · New (same idea as paced reviews):
+ * - First assign of the day (no paced new rows yet) → pick roadmap head up to pacing.newToday.
+ * - Once assigned → keep that set; finishing one does NOT pull the next.
+ * - May trim unchecked if cap lowered; never grow mid-day. Use + Extra new for more.
+ * Next calendar day starts fresh → next roadmap problems.
  */
 export function refreshTodayNewSlots(): void {
   const today = todayStr()
@@ -176,7 +581,7 @@ export function refreshTodayNewSlots(): void {
     return
   }
 
-  // First assign today — empty new list.
+  // First assign today — empty paced new list.
   if (cap <= 0) return
 
   const excludeIds = new Set(rows.map((r) => r.problem_id))
@@ -197,6 +602,40 @@ export function refreshTodayNewSlots(): void {
  *
  * New (bootstrap or not): next Kept · Undone in NeetCode roadmap order.
  */
+function commitExtraAssignment(
+  kind: AssignmentKind,
+  problemId: number,
+  position: number,
+  title: string,
+): { ok: boolean; message: string } {
+  const today = todayStr()
+  const dup = db
+    .prepare(
+      'SELECT id FROM today_assignments WHERE assignment_date = ? AND problem_id = ?',
+    )
+    .get(today, problemId) as { id: number } | undefined
+  if (dup) return { ok: false, message: 'Problem already on Today' }
+
+  const tx = db.transaction(() => {
+    const info = insertExtraAssignment.run(today, problemId, kind, position)
+    const assignmentId = Number(info.lastInsertRowid)
+    const row = db
+      .prepare('SELECT kind, is_extra, checked FROM today_assignments WHERE id = ?')
+      .get(assignmentId) as
+      | Pick<TodayAssignment, 'kind' | 'is_extra' | 'checked'>
+      | undefined
+    if (!row || row.kind !== kind || row.is_extra !== 1 || row.checked !== 0) {
+      throw new Error('extra insert verify failed')
+    }
+  })
+  try {
+    tx()
+  } catch {
+    return { ok: false, message: 'Could not add extra — try again' }
+  }
+  return { ok: true, message: `Added ${title}` }
+}
+
 export function addExtraReview(): { ok: boolean; message: string } {
   const today = todayStr()
   const rows = getTodayAssignments()
@@ -214,8 +653,8 @@ export function addExtraReview(): { ok: boolean; message: string } {
     return {
       ok: false,
       message: isBootstrapActive()
-        ? 'No more bootstrap problems left to add'
-        : 'No more reviews available to add',
+        ? 'No More Bootstrap Problems Left to Add'
+        : 'No More Reviews Available to Add',
     }
   }
 
@@ -223,34 +662,45 @@ export function addExtraReview(): { ok: boolean; message: string } {
     -1,
     ...rows.filter((r) => r.kind === 'review').map((r) => r.position),
   )
-  insertExtraAssignment.run(today, pick.id, 'review', maxPos + 1)
-  return { ok: true, message: `Added ${pick.title}` }
+  return commitExtraAssignment('review', pick.id, maxPos + 1, pick.title)
 }
 
 export function addExtraNew(): { ok: boolean; message: string } {
-  const today = todayStr()
   const rows = getTodayAssignments()
   const excludeIds = new Set(rows.map((r) => r.problem_id))
   const pick = pickNew(1, excludeIds)[0]
   if (!pick) {
-    return { ok: false, message: 'No more undone Kept problems to add' }
+    return { ok: false, message: 'No More Undone Kept Problems to Add' }
   }
   const maxPos = Math.max(-1, ...rows.filter((r) => r.kind === 'new').map((r) => r.position))
-  insertExtraAssignment.run(today, pick.id, 'new', maxPos + 1)
-  return { ok: true, message: `Added ${pick.title}` }
+  return commitExtraAssignment('new', pick.id, maxPos + 1, pick.title)
 }
 
 /** Remove a same-day extra slot the user added (+ Extra review/new). Paced assignments cannot be removed. */
 export function removeExtraAssignment(assignmentId: number): { ok: boolean; message: string } {
+  const today = todayStr()
   const row = db
     .prepare('SELECT * FROM today_assignments WHERE id = ? AND assignment_date = ?')
-    .get(assignmentId, todayStr()) as TodayAssignment | undefined
+    .get(assignmentId, today) as TodayAssignment | undefined
 
   if (!row) return { ok: false, message: 'Not on Today anymore' }
   if (row.is_extra !== 1) return { ok: false, message: 'Only extras you added can be removed' }
   if (row.checked === 1) return { ok: false, message: 'Already completed — cannot remove' }
 
-  deleteAssignmentById.run(assignmentId)
+  const tx = db.transaction(() => {
+    deleteAssignmentById.run(assignmentId)
+    const still = db
+      .prepare('SELECT id FROM today_assignments WHERE id = ?')
+      .get(assignmentId) as { id: number } | undefined
+    if (still) throw new Error('delete failed')
+  })
+  try {
+    tx()
+  } catch {
+    return { ok: false, message: 'Could not remove — try again' }
+  }
+
+  // Problem is no longer on Today — add-extra / pick logic will see it as available again.
   return { ok: true, message: 'Removed from Today' }
 }
 
@@ -291,14 +741,41 @@ export function getTodayAssignments(): AssignmentWithProblem[] {
 }
 
 /** Mark an assignment row checked after its rating was saved. */
-export function checkAssignment(assignmentId: number): void {
+export function checkAssignment(assignmentId: number, meta?: AssignmentRatingMeta): void {
+  if (meta) {
+    db.prepare(
+      `UPDATE today_assignments SET checked = 1, rated_at = ?, session_rating = ?, session_hints = ?, before_json = ?
+       WHERE id = ?`,
+    ).run(
+      nowISO(),
+      meta.sessionRating,
+      meta.sessionHints,
+      beforeJsonPayload(meta),
+      assignmentId,
+    )
+    return
+  }
   db.prepare(
     'UPDATE today_assignments SET checked = 1, rated_at = ? WHERE id = ?',
   ).run(nowISO(), assignmentId)
 }
 
 /** If this problem is on today's list (unchecked), mark it checked (Problems-tab path). */
-export function checkAssignmentForProblem(problemId: number): void {
+export function checkAssignmentForProblem(problemId: number, meta?: AssignmentRatingMeta): void {
+  if (meta) {
+    db.prepare(
+      `UPDATE today_assignments SET checked = 1, rated_at = ?, session_rating = ?, session_hints = ?, before_json = ?
+       WHERE assignment_date = ? AND problem_id = ? AND checked = 0`,
+    ).run(
+      nowISO(),
+      meta.sessionRating,
+      meta.sessionHints,
+      beforeJsonPayload(meta),
+      todayStr(),
+      problemId,
+    )
+    return
+  }
   db.prepare(
     'UPDATE today_assignments SET checked = 1, rated_at = ? WHERE assignment_date = ? AND problem_id = ? AND checked = 0',
   ).run(nowISO(), todayStr(), problemId)

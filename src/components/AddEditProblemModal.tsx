@@ -73,7 +73,10 @@ export default function AddEditProblemModal({ onAdd, onClose }: Props) {
             />
           </label>
           <label className="block text-sm text-gray-400">
-            Slug <span className="text-gray-600">(NeetCode slug match → Kept, else bonus)</span>
+            LeetCode ID{' '}
+            <span className="text-gray-600">
+              (URL name, e.g. two-sum — re-enables Removed if it matches)
+            </span>
             <input
               className={`mt-1 ${inputCls}`}
               value={slug}
@@ -81,6 +84,7 @@ export default function AddEditProblemModal({ onAdd, onClose }: Props) {
                 setSlug(e.target.value)
                 setSlugTouched(true)
               }}
+              placeholder="two-sum"
             />
           </label>
           <div className="flex gap-3">
@@ -110,7 +114,8 @@ export default function AddEditProblemModal({ onAdd, onClose }: Props) {
             </label>
           </div>
           <label className="block text-sm text-gray-400">
-            URL <span className="text-gray-600">(optional — defaults to leetcode.com/problems/slug)</span>
+            URL{' '}
+            <span className="text-gray-600">(optional — defaults to leetcode.com/problems/id)</span>
             <input
               className={`mt-1 ${inputCls}`}
               value={url}

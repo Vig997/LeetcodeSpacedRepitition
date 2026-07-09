@@ -4,10 +4,11 @@ import {
   rateReviewAssignment,
   completeProblemAssignment,
   startBootstrap,
-  cancelBootstrap,
   addExtraReview,
   addExtraNew,
   removeExtraAssignment,
+  editAssignmentRating,
+  uncheckAssignment,
 } from '../lib/dataStore'
 import ProgressRing from '../components/ProgressRing'
 import BonusRing from '../components/BonusRing'
@@ -22,7 +23,24 @@ import type { Rating } from '../lib/types'
 export default function Dashboard() {
   const snap = useProblems()
   const [rating, setRating] = useState<AssignmentWithProblem | null>(null)
+  const [editingRating, setEditingRating] = useState(false)
   const [showBootstrapModal, setShowBootstrapModal] = useState(false)
+  const [actionMessage, setActionMessage] = useState<string | null>(null)
+
+  const showActionMessage = (message: string): void => {
+    setActionMessage(message)
+    window.setTimeout(() => setActionMessage(null), 4000)
+  }
+
+  const handleUncheck = (a: AssignmentWithProblem): void => {
+    const result = uncheckAssignment(a.id)
+    if (!result.ok) showActionMessage(result.message)
+  }
+
+  const handleRowToggle = (a: AssignmentWithProblem): void => {
+    if (a.checked === 1) handleUncheck(a)
+    else openRating(a)
+  }
 
   const doneKept = snap.pacing.doneKept
   const keptTotal = snap.pacing.keptTotal
@@ -49,18 +67,53 @@ export default function Dashboard() {
 
   const saveRating = (r: Rating, hints: number): void => {
     if (!rating) return
-    if (rating.kind === 'review') {
-      rateReviewAssignment(rating.id, rating.problem_id, r, hints)
+    let result: { ok: boolean; message: string }
+    if (editingRating) {
+      result = editAssignmentRating(rating.id, r, hints)
+    } else if (rating.kind === 'review') {
+      result = rateReviewAssignment(rating.id, rating.problem_id, r, hints)
     } else {
-      completeProblemAssignment(rating.id, rating.problem_id, r, hints)
+      result = completeProblemAssignment(rating.id, rating.problem_id, r, hints)
+    }
+    if (!result.ok) {
+      showActionMessage(result.message)
+      return
     }
     setRating(null)
+    setEditingRating(false)
+  }
+
+  const openRating = (a: AssignmentWithProblem): void => {
+    setEditingRating(false)
+    setRating(a)
+  }
+
+  const openEditRating = (a: AssignmentWithProblem): void => {
+    setEditingRating(true)
+    setRating(a)
+  }
+
+  const closeRating = (): void => {
+    setRating(null)
+    setEditingRating(false)
   }
 
   return (
     <div className="space-y-5">
+      {actionMessage && (
+        <p className="rounded-lg border border-amber-800/60 bg-amber-950/40 px-4 py-2 text-sm text-amber-300">
+          {actionMessage}
+        </p>
+      )}
       <div className="flex justify-center gap-12 py-2">
-        <ProgressRing done={doneKept} total={keptTotal} label="NeetCode" />
+        <ProgressRing
+          done={doneKept}
+          total={keptTotal}
+          label="NeetCode"
+          easy={snap.keptEasy}
+          medium={snap.keptMedium}
+          hard={snap.keptHard}
+        />
         <BonusRing
           done={snap.customDone}
           total={snap.customTotal}
@@ -70,39 +123,33 @@ export default function Dashboard() {
         />
       </div>
 
-      <PaceOverview goal={snap.goal} pacing={snap.pacing} advice={snap.advice} />
+      <PaceOverview
+        goal={snap.goal}
+        pacing={snap.pacing}
+        advice={snap.advice}
+        todayLoad={snap.todayLoad}
+      />
 
-      {snap.bootstrapActive ? (
-        <div className="flex justify-end">
+      {!snap.bootstrapActive && snap.bootstrapCandidates.length > 0 && (
+        <div className="flex items-center justify-between rounded-xl border border-gray-800 bg-gray-900/40 px-4 py-2.5 text-sm text-gray-400">
+          <span>
+            Optional: Bootstrap-Review Your {snap.bootstrapCandidates.length} Done
+            Problems Before Adding New Ones
+          </span>
           <button
             type="button"
-            onClick={cancelBootstrap}
-            className="rounded-lg border border-sky-800 px-3 py-1.5 text-xs text-sky-300 transition hover:bg-sky-900/50"
+            onClick={() => setShowBootstrapModal(true)}
+            className="rounded-md bg-sky-600 px-3 py-1.5 text-xs font-semibold whitespace-nowrap text-white transition hover:bg-sky-500"
           >
-            Cancel bootstrap
+            Start Bootstrap
           </button>
         </div>
-      ) : (
-        snap.bootstrapCandidates.length > 0 && (
-          <div className="flex items-center justify-between rounded-xl border border-gray-800 bg-gray-900/40 px-4 py-2.5 text-sm text-gray-400">
-            <span>
-              Optional: baseline-review your {snap.bootstrapCandidates.length} done
-              problems before adding new ones
-            </span>
-            <button
-              type="button"
-              onClick={() => setShowBootstrapModal(true)}
-              className="rounded-md bg-sky-600 px-3 py-1.5 text-xs font-semibold whitespace-nowrap text-white transition hover:bg-sky-500"
-            >
-              Start Bootstrap
-            </button>
-          </div>
-        )
       )}
 
       <TodayReviewsList
         assignments={reviews}
-        onCheck={setRating}
+        onToggle={handleRowToggle}
+        onEdit={openEditRating}
         onAddExtra={() => addExtraReview()}
         onRemoveExtra={(a) => removeExtraAssignment(a.id)}
         canAddExtra={canAddExtraReview}
@@ -110,7 +157,8 @@ export default function Dashboard() {
       <TodayNewList
         assignments={news}
         bootstrapNewPerDay={snap.bootstrapActive ? snap.pacing.bootstrapNewPerDay : 0}
-        onCheck={setRating}
+        onToggle={handleRowToggle}
+        onEdit={openEditRating}
         onAddExtra={() => addExtraNew()}
         onRemoveExtra={(a) => removeExtraAssignment(a.id)}
         canAddExtra={canAddExtraNew}
@@ -119,9 +167,20 @@ export default function Dashboard() {
       {rating && (
         <RatingModal
           problem={rating.problem}
-          title={rating.kind === 'review' ? 'Rate this review' : 'Mark done — rate it'}
+          title={
+            editingRating
+              ? 'Edit Rating'
+              : rating.kind === 'review'
+                ? 'Rate This Review'
+                : 'Mark Done — Rate It'
+          }
+          initialRating={editingRating ? rating.session_rating ?? rating.problem.last_rating : null}
+          initialHints={
+            editingRating ? (rating.session_hints ?? rating.problem.last_hints) : 0
+          }
+          saveLabel={editingRating ? 'Update' : 'Save'}
           onSave={saveRating}
-          onCancel={() => setRating(null)}
+          onCancel={closeRating}
         />
       )}
       {showBootstrapModal && (

@@ -101,7 +101,7 @@ export default function Problems() {
           onChange={(e) => setTopicFilter(e.target.value)}
           className="rounded-lg border border-gray-700 bg-gray-900 px-2 py-1.5 text-xs text-gray-300 outline-none"
         >
-          <option value="">All concepts</option>
+          <option value="">All Concepts</option>
           {TOPICS.map((t) => (
             <option key={t} value={t}>
               {t}
@@ -120,12 +120,9 @@ export default function Problems() {
 
       {/* Kept */}
       <section className="rounded-xl border border-gray-800 bg-gray-900/60 p-5">
-        <h2 className="mb-1 text-sm font-semibold tracking-wide text-gray-300 uppercase">
+        <h2 className="mb-4 text-sm font-semibold tracking-wide text-gray-300 uppercase">
           Kept ({keptTotalAll})
         </h2>
-        <p className="mb-4 text-xs text-gray-500">
-          Active goal · counts for ring + SR
-        </p>
         {keptByTopic.length === 0 && (
           <p className="text-sm text-gray-500">No matches.</p>
         )}
@@ -150,12 +147,9 @@ export default function Problems() {
 
       {/* Removed — always visible */}
       <section className="rounded-xl border border-gray-800/70 bg-gray-900/40 p-5">
-        <h2 className="mb-1 text-sm font-semibold tracking-wide text-gray-500 uppercase">
+        <h2 className="mb-4 text-sm font-semibold tracking-wide text-gray-500 uppercase">
           Removed ({removedTotalAll})
         </h2>
-        <p className="mb-4 text-xs text-gray-600">
-          Visible · not in SR · not in ring
-        </p>
         {removed.length === 0 ? (
           <p className="text-sm text-gray-600">No removed problems match.</p>
         ) : (
@@ -170,7 +164,7 @@ export default function Problems() {
       {ratingTarget && (
         <RatingModal
           problem={ratingTarget.problem}
-          title={ratingTarget.mode === 'done' ? 'Mark done — rate it' : 'Log review'}
+          title={ratingTarget.mode === 'done' ? 'Mark Done — Rate It' : 'Log Review'}
           onSave={saveRating}
           onCancel={() => setRatingTarget(null)}
         />

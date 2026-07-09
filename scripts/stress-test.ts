@@ -34,11 +34,12 @@ import { db } from '../src/lib/db'
 import { getBootstrapTotalDays, nextSchedule, bootstrapSpreadJitter } from '../src/lib/scheduler'
 import { pickNew } from '../src/lib/topicBalancer'
 import { ensureToday } from '../src/lib/todayAssignments'
-import { todayStr, addDays, daysBetween } from '../src/lib/dates'
+import { todayStr, addDays, daysBetween, appDayFromDate, DAY_ROLLOVER_HOUR } from '../src/lib/dates'
 import { LOAD_CEILING } from '../src/lib/pacing'
 import { computePaceAdvice } from '../src/lib/paceAdvice'
 import type { PaceAdvice } from '../src/lib/paceAdvice'
 import { TOPICS } from '../src/lib/topics'
+import { getSetting } from '../src/lib/settings'
 import neetcode from '../data/neetcode150.json'
 import {
   getSnapshot,
@@ -57,7 +58,11 @@ import {
   addExtraReview,
   addExtraNew,
   removeExtraAssignment,
+  editAssignmentRating,
+  uncheckAssignment,
+  saveSettings,
 } from '../src/lib/dataStore'
+import { getAppSettings } from '../src/lib/settings'
 import type { Rating } from '../src/lib/types'
 
 let failures = 0
@@ -121,7 +126,7 @@ function checkInvariants(label: string): void {
 
 // ================= scenario =================
 console.log('start:', todayStr())
-checkInvariants('fresh seed')
+  checkInvariants('fresh seed')
 
 // New picks follow strict NeetCode roadmap order (Trees is first undone block in seed)
 {
@@ -168,9 +173,32 @@ assert(snap.problems.filter((p) => p.is_excluded === 1).length === 30, 'seeded 3
 assert(snap.pacing.keptTotal === 120, `kept_total=${snap.pacing.keptTotal}, want 120`)
 assert(snap.pacing.doneKept === 43, 'seeded 43 done')
 
+// Architectural: DB schema v3 (edit/uncheck columns — not UI-only)
+{
+  const cols = db.pragma('table_info(today_assignments)') as { name: string }[]
+  const names = new Set(cols.map((c) => c.name))
+  for (const col of ['session_rating', 'session_hints', 'before_json', 'is_extra']) {
+    assert(names.has(col), `schema missing today_assignments.${col}`)
+  }
+  assert(getSetting('schema_version') === '3', `schema_version=${getSetting('schema_version')}, want 3`)
+  console.log('  schema v3 columns ok')
+}
+
+// App day rolls at 3:00 local — before that, still yesterday's problem set
+{
+  assert(DAY_ROLLOVER_HOUR === 3, 'DAY_ROLLOVER_HOUR is 3')
+  const twoAm = new RealDate(2026, 6, 9, 2, 0, 0)
+  const fourAm = new RealDate(2026, 6, 9, 4, 0, 0)
+  assert(appDayFromDate(twoAm) === '2026-07-08', '2am local = previous app day')
+  assert(appDayFromDate(fourAm) === '2026-07-09', '4am local = current app day')
+  assert(appDayFromDate(new RealDate(2026, 6, 9, 3, 0, 0)) === '2026-07-09', '3am starts new app day')
+  console.log('  3am day rollover ok')
+}
+
 // Day-locked Today · New: finish one mid-day → remaining stay; no refill until next day
 {
   cancelBootstrap()
+  updateSetting('new_per_day', 2)
   ensureToday()
   let snapN = getSnapshot()
   const day1New = snapN.assignments.filter((a) => a.kind === 'new')
@@ -204,6 +232,53 @@ assert(snap.pacing.doneKept === 43, 'seeded 43 done')
     )
   }
   checkInvariants('day-locked new slots')
+}
+
+// 2 paced new + finish both + extra new completed → extra must not return tomorrow
+{
+  cancelBootstrap()
+  advanceDays(1) // fresh day — isolated from prior day-lock test
+  updateSetting('new_per_day', 2)
+  updateSetting('review_daily_target', 1)
+  ensureToday()
+  let snapX = getSnapshot()
+  const wantNew = snapX.pacing.newToday
+  assert(wantNew >= 1, 'need at least one paced new for this test')
+  const paced = snapX.assignments.filter((a) => a.kind === 'new' && a.is_extra !== 1)
+  assert(
+    paced.length === wantNew,
+    `want ${wantNew} paced new, got ${paced.length} (newToday=${snapX.pacing.newToday})`,
+  )
+  for (const a of paced) {
+    completeProblemAssignment(a.id, a.problem_id, 'medium', 0)
+  }
+  const extraAdd = addExtraNew()
+  assert(extraAdd.ok, `addExtraNew: ${extraAdd.message}`)
+  snapX = getSnapshot()
+  const extra = snapX.assignments.find(
+    (a) => a.kind === 'new' && a.is_extra === 1 && a.checked === 0,
+  )
+  assert(extra !== undefined, 'extra new assigned after finishing paced set')
+  const extraOrder = extra!.problem.neetcode_order ?? 0
+  const extraId = extra!.problem_id
+  completeProblemAssignment(extra!.id, extra!.problem_id, 'easy', 0)
+
+  advanceDays(1)
+  ensureToday()
+  snapX = getSnapshot()
+  const wantDay2 = snapX.pacing.newToday
+  const day2 = snapX.assignments.filter(
+    (a) => a.kind === 'new' && a.checked === 0 && a.is_extra !== 1,
+  )
+  assert(!snapX.assignments.some((a) => a.is_extra === 1), 'extras do not carry to next day')
+  assert(!day2.some((a) => a.problem_id === extraId), 'completed extra must not reappear on day2')
+  assert(day2.length === wantDay2, `day2 paced new=${day2.length}, want ${wantDay2}`)
+  assert(
+    day2.every((a) => (a.problem.neetcode_order ?? 0) > extraOrder),
+    'day2 paced new must be the next roadmap problems after the completed extra',
+  )
+  checkInvariants('paced new + completed extra next-day')
+  console.log('  paced new + extra next-day ok')
 }
 
 // Same-day extras: thorough coverage (normal + bootstrap + edges)
@@ -242,6 +317,30 @@ assert(snap.pacing.doneKept === 43, 'seeded 43 done')
   assert(extraNew!.problem.is_custom === 0, 'extra new is not custom')
   assert(extraReview!.problem.first_completed_at !== null, 'extra review is done SR')
 
+  // Add reflected in DB + todayLoad; paced counts unchanged
+  assert(snapE.todayLoad.extraReviewCount === 1, 'todayLoad.extraReviewCount after add')
+  assert(snapE.todayLoad.extraNewCount === 1, 'todayLoad.extraNewCount after add')
+  assert(snapE.todayLoad.pacedReviewCount === beforeReviews, 'paced review count unchanged by extra')
+  assert(snapE.todayLoad.pacedNewCount === beforeNew, 'paced new count unchanged by extra')
+  assert(
+    snapE.todayLoad.reviewCount === beforeReviews + 1,
+    'todayLoad.reviewCount includes extra',
+  )
+  assert(snapE.todayLoad.newCount === beforeNew + 1, 'todayLoad.newCount includes extra')
+  const dbExtraReview = db
+    .prepare('SELECT is_extra, kind FROM today_assignments WHERE id = ?')
+    .get(extraReview!.id) as { is_extra: number; kind: string }
+  assert(dbExtraReview.is_extra === 1 && dbExtraReview.kind === 'review', 'extra review in DB')
+  const dbExtraNew = db
+    .prepare('SELECT is_extra, kind FROM today_assignments WHERE id = ?')
+    .get(extraNew!.id) as { is_extra: number; kind: string }
+  assert(dbExtraNew.is_extra === 1 && dbExtraNew.kind === 'new', 'extra new in DB')
+  ensureToday()
+  snapE = getSnapshot()
+  assert(snapE.todayLoad.extraReviewCount === 1, 'ensureToday keeps extra review')
+  assert(snapE.todayLoad.extraNewCount === 1, 'ensureToday keeps extra new')
+  assert(snapE.todayLoad.pacedReviewCount === beforeReviews, 'ensureToday does not add paced reviews')
+
   // No duplicate problem ids on Today
   const idsToday = snapE.assignments.map((a) => a.problem_id)
   assert(new Set(idsToday).size === idsToday.length, 'extras never duplicate Today problems')
@@ -251,6 +350,16 @@ assert(snap.pacing.doneKept === 43, 'seeded 43 done')
   assert(rmReview.ok, `removeExtraReview: ${rmReview.message}`)
   const rmNew = removeExtraAssignment(extraNew!.id)
   assert(rmNew.ok, `removeExtraNew: ${rmNew.message}`)
+  const removedReviewPid = extraReview!.problem_id
+  const removedNewPid = extraNew!.problem_id
+  assert(
+    (
+      db.prepare('SELECT id FROM today_assignments WHERE id = ?').get(extraReview!.id) as
+        | { id: number }
+        | undefined
+    ) === undefined,
+    'extra review row deleted from DB',
+  )
   snapE = getSnapshot()
   assert(
     snapE.assignments.filter((a) => a.is_extra === 1).length === 0,
@@ -260,6 +369,29 @@ assert(snap.pacing.doneKept === 43, 'seeded 43 done')
     snapE.assignments.filter((a) => a.kind === 'review').length === beforeReviews,
     'paced reviews unchanged after removing extra',
   )
+  assert(snapE.todayLoad.extraReviewCount === 0, 'todayLoad.extraReviewCount cleared')
+  assert(snapE.todayLoad.extraNewCount === 0, 'todayLoad.extraNewCount cleared')
+  assert(
+    snapE.todayLoad.reviewCount === beforeReviews,
+    'todayLoad.reviewCount matches paced only',
+  )
+  ensureToday()
+  snapE = getSnapshot()
+  assert(
+    !snapE.assignments.some((a) => a.problem_id === removedReviewPid && a.is_extra === 1),
+    'ensureToday does not resurrect removed extra review',
+  )
+  assert(
+    !snapE.assignments.some((a) => a.problem_id === removedNewPid && a.is_extra === 1),
+    'ensureToday does not resurrect removed extra new',
+  )
+  const reReview = addExtraReview()
+  assert(reReview.ok, 'can re-add extra review after remove')
+  const reNew = addExtraNew()
+  assert(reNew.ok, 'can re-add extra new after remove')
+  snapE = getSnapshot()
+  assert(snapE.todayLoad.extraReviewCount === 1, 'todayLoad updates after re-add review')
+  assert(snapE.todayLoad.extraNewCount === 1, 'todayLoad updates after re-add new')
   const badRm = removeExtraAssignment(
     snapE.assignments.find((a) => a.kind === 'review' && a.is_extra !== 1)!.id,
   )
@@ -305,6 +437,17 @@ assert(snap.pacing.doneKept === 43, 'seeded 43 done')
       getSnapshot().assignments.find((a) => a.id === openExtraReview.id)?.checked === 1,
       'extra review can be rated',
     )
+    const ratedRow = getSnapshot().assignments.find((a) => a.id === openExtraReview.id)!
+    assert(ratedRow.before_json !== null, 'before_json stored on check')
+    assert(ratedRow.session_rating === 'medium' && ratedRow.session_hints === 0, 'session rating stored')
+    const edit = editAssignmentRating(openExtraReview.id, 'hard', 2)
+    assert(edit.ok, `editAssignmentRating: ${edit.message}`)
+    const edited = getSnapshot().assignments.find((a) => a.id === openExtraReview.id)!
+    assert(edited.session_rating === 'hard' && edited.session_hints === 2, 'session rating updated')
+    const editedProb = getSnapshot().problems.find((p) => p.id === openExtraReview.problem_id)!
+    assert(editedProb.last_rating === 'hard' && editedProb.last_hints === 2, 'problem rating updated')
+    const edit2 = editAssignmentRating(openExtraReview.id, 'easy', 0)
+    assert(edit2.ok, 'can edit rating twice same day')
   }
   const openExtraNew = snapE.assignments.find(
     (a) => a.kind === 'new' && a.is_extra === 1 && a.checked === 0,
@@ -446,20 +589,268 @@ assert(snap.pacing.doneKept === 43, 'seeded 43 done')
   checkInvariants('undo last rating')
 }
 
-// Custom bonus excluded from pickNew and goal rings
+// Uncheck + re-check + edit flow (review and new)
 {
-  addProblem({
-    title: 'Bonus Undone',
-    slug: 'bonus-undone-test',
+  cancelBootstrap()
+  ensureToday()
+  let snapU = getSnapshot()
+
+  const openReview = snapU.assignments.find((a) => a.kind === 'review' && a.checked === 0)
+  if (openReview) {
+    const probBefore = db
+      .prepare('SELECT last_rating, repetitions FROM problems WHERE id = ?')
+      .get(openReview.problem_id) as { last_rating: string | null; repetitions: number }
+    const logBefore = (
+      db.prepare('SELECT COUNT(*) AS c FROM review_log WHERE problem_id = ?').get(openReview.problem_id) as {
+        c: number
+      }
+    ).c
+
+    rateReviewAssignment(openReview.id, openReview.problem_id, 'medium', 1)
+    snapU = getSnapshot()
+    let row = snapU.assignments.find((a) => a.id === openReview.id)!
+    assert(row.checked === 1 && row.before_json !== null, 'review checked with before_json')
+    const dbChecked = db
+      .prepare(
+        'SELECT session_rating, session_hints, before_json FROM today_assignments WHERE id = ?',
+      )
+      .get(openReview.id) as {
+      session_rating: string
+      session_hints: number
+      before_json: string
+    }
+    assert(
+      dbChecked.session_rating === 'medium' && dbChecked.session_hints === 1,
+      'DB session_rating/hints persisted on check',
+    )
+    assert(dbChecked.before_json !== null, 'DB before_json persisted on check')
+
+    const uncheck = uncheckAssignment(openReview.id)
+    assert(uncheck.ok, `uncheck review: ${uncheck.message}`)
+    snapU = getSnapshot()
+    row = snapU.assignments.find((a) => a.id === openReview.id)!
+    assert(row.checked === 0, 'review unchecked')
+    assert(row.session_rating === null && row.before_json === null, 'review session cleared')
+    const dbClear = db
+      .prepare(
+        'SELECT session_rating, session_hints, before_json FROM today_assignments WHERE id = ?',
+      )
+      .get(openReview.id) as {
+      session_rating: string | null
+      session_hints: number | null
+      before_json: string | null
+    }
+    assert(
+      dbClear.session_rating === null &&
+        dbClear.session_hints === null &&
+        dbClear.before_json === null,
+      'DB session columns cleared on uncheck',
+    )
+    const probAfter = db
+      .prepare('SELECT last_rating, repetitions FROM problems WHERE id = ?')
+      .get(openReview.problem_id) as { last_rating: string | null; repetitions: number }
+    assert(probAfter.last_rating === probBefore.last_rating, 'review state restored')
+    assert(
+      (
+        db.prepare('SELECT COUNT(*) AS c FROM review_log WHERE problem_id = ?').get(openReview.problem_id) as {
+          c: number
+        }
+      ).c === logBefore,
+      'review_log reverted on uncheck',
+    )
+
+    rateReviewAssignment(openReview.id, openReview.problem_id, 'hard', 2)
+    snapU = getSnapshot()
+    row = snapU.assignments.find((a) => a.id === openReview.id)!
+    assert(row.checked === 1 && row.session_rating === 'hard', 'review re-checked with fresh rating')
+    const edit = editAssignmentRating(openReview.id, 'easy', 0)
+    assert(edit.ok, `edit after re-check: ${edit.message}`)
+    assert(
+      getSnapshot().assignments.find((a) => a.id === openReview.id)!.session_rating === 'easy',
+      'edit after re-check works',
+    )
+  }
+
+  snapU = getSnapshot()
+  const openNew = snapU.assignments.find((a) => a.kind === 'new' && a.checked === 0)
+  if (openNew) {
+    const wasUndone = openNew.problem.first_completed_at === null
+    completeProblemAssignment(openNew.id, openNew.problem_id, 'medium', 0)
+    snapU = getSnapshot()
+    let row = snapU.assignments.find((a) => a.id === openNew.id)!
+    assert(row.checked === 1 && row.before_json !== null, 'new checked with before_json')
+
+    const uncheck = uncheckAssignment(openNew.id)
+    assert(uncheck.ok, `uncheck new: ${uncheck.message}`)
+    snapU = getSnapshot()
+    row = snapU.assignments.find((a) => a.id === openNew.id)!
+    assert(row.checked === 0, 'new unchecked')
+    if (wasUndone) {
+      const prob = getSnapshot().problems.find((p) => p.id === openNew.problem_id)!
+      assert(prob.first_completed_at === null, 'new completion reverted')
+    }
+
+    completeProblemAssignment(openNew.id, openNew.problem_id, 'easy', 1)
+    assert(
+      getSnapshot().assignments.find((a) => a.id === openNew.id)!.checked === 1,
+      'new re-checked',
+    )
+  }
+
+  checkInvariants('uncheck + re-check + edit')
+  console.log('  uncheck + re-check + edit ok')
+}
+
+// Legacy checked rows without before_json can still uncheck (review_log fallback)
+{
+  cancelBootstrap()
+  ensureToday()
+  let snapL = getSnapshot()
+  const openReview = snapL.assignments.find((a) => a.kind === 'review' && a.checked === 0)
+  if (openReview) {
+    rateReviewAssignment(openReview.id, openReview.problem_id, 'medium', 1)
+    db.prepare(
+      'UPDATE today_assignments SET before_json = NULL, session_rating = NULL WHERE id = ?',
+    ).run(openReview.id)
+    const uncheck = uncheckAssignment(openReview.id)
+    assert(uncheck.ok, `legacy uncheck review: ${uncheck.message}`)
+    assert(
+      getSnapshot().assignments.find((a) => a.id === openReview.id)!.checked === 0,
+      'legacy review unchecked',
+    )
+  }
+  snapL = getSnapshot()
+  const openNew = snapL.assignments.find((a) => a.kind === 'new' && a.checked === 0)
+  if (openNew) {
+    completeProblemAssignment(openNew.id, openNew.problem_id, 'easy', 0)
+    db.prepare(
+      'UPDATE today_assignments SET before_json = NULL, session_rating = NULL WHERE id = ?',
+    ).run(openNew.id)
+    const uncheck = uncheckAssignment(openNew.id)
+    assert(uncheck.ok, `legacy uncheck new: ${uncheck.message}`)
+    assert(
+      getSnapshot().assignments.find((a) => a.id === openNew.id)!.checked === 0,
+      'legacy new unchecked',
+    )
+  }
+  checkInvariants('legacy uncheck without before_json')
+  console.log('  legacy uncheck without before_json ok')
+
+  // Single review_log on an already-done problem (no before_json) — common legacy shape
+  ensureToday()
+  snapL = getSnapshot()
+  const doneReview = snapL.assignments.find((a) => a.kind === 'review' && a.checked === 0)
+  if (doneReview) {
+    const pid = doneReview.problem_id
+    db.prepare('DELETE FROM review_log WHERE problem_id = ?').run(pid)
+    rateReviewAssignment(doneReview.id, pid, 'hard', 2)
+    db.prepare(
+      'UPDATE today_assignments SET before_json = NULL, session_rating = NULL, session_hints = NULL WHERE id = ?',
+    ).run(doneReview.id)
+    const singleUncheck = uncheckAssignment(doneReview.id)
+    assert(singleUncheck.ok, `single-log legacy uncheck: ${singleUncheck.message}`)
+    assert(
+      getSnapshot().assignments.find((a) => a.id === doneReview.id)!.checked === 0,
+      'single-log legacy unchecked',
+    )
+  }
+  checkInvariants('single-log legacy uncheck')
+  console.log('  single-log legacy uncheck ok')
+}
+
+// Add Problem (Problems tab): DB paths — custom bonus, duplicate, re-enable Removed
+{
+  const keptBefore = getSnapshot().pacing.keptTotal
+  const customBefore = getSnapshot().customTotal
+
+  const novel = addProblem({
+    title: 'Architect Bonus',
+    slug: 'arch-bonus-add-test',
     difficulty: 'Easy',
     topic: 'Arrays & Hashing',
   })
-  const custom = getSnapshot().problems.find((p) => p.slug === 'bonus-undone-test')!
-  assert(custom.is_custom === 1, 'custom flagged')
-  const picked = pickNew(5, new Set())
-  assert(!picked.some((p) => p.slug === 'bonus-undone-test'), 'pickNew excludes custom')
-  assert(getSnapshot().pacing.keptTotal === 120, 'custom not in kept_total ring')
-  db.prepare('DELETE FROM problems WHERE slug = ?').run('bonus-undone-test')
+  assert(novel.added, `novel add: ${novel.message}`)
+  const bonusRow = db
+    .prepare('SELECT is_custom, is_excluded, url, status FROM problems WHERE slug = ?')
+    .get('arch-bonus-add-test') as {
+    is_custom: number
+    is_excluded: number
+    url: string
+    status: string
+  }
+  assert(bonusRow.is_custom === 1, 'novel add → is_custom=1 (bonus ring)')
+  assert(bonusRow.is_excluded === 0, 'novel add → Kept not Removed')
+  assert(bonusRow.status === 'undone', 'novel add → undone status')
+  assert(
+    bonusRow.url === 'https://leetcode.com/problems/arch-bonus-add-test/',
+    'default LeetCode URL from id',
+  )
+  assert(getSnapshot().customTotal === customBefore + 1, 'bonus ring total increments')
+  assert(
+    !pickNew(10, new Set()).some((p) => p.slug === 'arch-bonus-add-test'),
+    'custom excluded from paced Today · New',
+  )
+
+  const dup = addProblem({
+    title: 'Duplicate Two Sum',
+    slug: 'two-sum',
+    difficulty: 'Easy',
+    topic: 'Arrays & Hashing',
+  })
+  assert(!dup.added, 'duplicate Kept LeetCode ID rejected')
+  assert(dup.message.includes('already exists'), `duplicate message: ${dup.message}`)
+
+  const removed = getSnapshot().problems.find((p) => p.is_excluded === 1 && p.is_custom === 0)!
+  assert(removed !== undefined, 'need a Removed NeetCode row for re-enable test')
+  const reEnable = addProblem({
+    title: removed.title,
+    slug: removed.slug,
+    difficulty: removed.difficulty,
+    topic: removed.topic,
+  })
+  assert(reEnable.added, `re-enable Removed: ${reEnable.message}`)
+  assert(reEnable.message.includes('re-enabled'), `re-enable message: ${reEnable.message}`)
+  const reRow = db
+    .prepare('SELECT is_excluded, is_custom FROM problems WHERE id = ?')
+    .get(removed.id) as { is_excluded: number; is_custom: number }
+  assert(reRow.is_excluded === 0, 'Removed → Kept via matching LeetCode ID')
+  assert(reRow.is_custom === removed.is_custom, 're-enable preserves is_custom flag')
+  assert(getSnapshot().pacing.keptTotal === keptBefore + 1, 'kept ring increments on re-enable')
+
+  const customUrl = addProblem({
+    title: 'URL Override',
+    slug: 'arch-url-add-test',
+    difficulty: 'Hard',
+    topic: 'Two Pointers',
+    url: 'https://example.com/custom-link',
+  })
+  assert(customUrl.added, customUrl.message)
+  const urlRow = db
+    .prepare('SELECT url FROM problems WHERE slug = ?')
+    .get('arch-url-add-test') as { url: string }
+  assert(urlRow.url === 'https://example.com/custom-link', 'custom URL stored')
+
+  const mixed = addProblem({
+    title: 'Case Test',
+    slug: 'Mixed-Case-ID',
+    difficulty: 'Medium',
+    topic: 'Sliding Window',
+  })
+  assert(mixed.added, mixed.message)
+  assert(
+    db.prepare('SELECT slug FROM problems WHERE slug = ?').get('mixed-case-id') !== undefined,
+    'LeetCode ID normalized to lowercase in DB',
+  )
+
+  for (const slug of [
+    'arch-bonus-add-test',
+    'arch-url-add-test',
+    'mixed-case-id',
+  ]) {
+    db.prepare('DELETE FROM problems WHERE slug = ?').run(slug)
+  }
+  checkInvariants('add problem architectural')
+  console.log('  add problem architectural ok')
 }
 
 // Forgot during bootstrap gets full deferral (not next-day)
@@ -879,6 +1270,51 @@ function assertAdviceInvariants(advice: PaceAdvice, label: string): void {
   checkInvariants('new-during-bootstrap deferral')
 }
 
+// markDone during bootstrap gets SR + deferral; after bootstrap ends → normal SR only
+{
+  cancelBootstrap()
+  assert(getSetting('bootstrap_active') !== '1', 'bootstrap off before post-bootstrap markDone')
+  const onToday = new Set(getSnapshot().assignments.map((a) => a.problem_id))
+  const undonePost = pickNew(1, onToday)[0]
+  assert(undonePost !== undefined, 'need undone for post-bootstrap markDone')
+  completeProblem(undonePost.id, 'hard', 0)
+  const postRow = db
+    .prepare('SELECT next_review_at, interval_days FROM problems WHERE id = ?')
+    .get(undonePost.id) as { next_review_at: string; interval_days: number }
+  const postSpan = daysBetween(todayStr(), postRow.next_review_at)
+  assert(
+    postSpan === postRow.interval_days,
+    `post-bootstrap markDone span=${postSpan}, want normal SR ${postRow.interval_days}`,
+  )
+
+  // During bootstrap: same rating gets srInterval + totalDays + jitter
+  const bootIds = getSnapshot().bootstrapCandidates.slice(0, 4).map((p) => p.id)
+  const cap = 2
+  const totalDays = Math.ceil(bootIds.length / cap)
+  startBootstrap(bootIds, cap, 0)
+  const extraDuring = addExtraNew()
+  assert(extraDuring.ok, `bootstrap extra new for during markDone: ${extraDuring.message}`)
+  const newDuring = getSnapshot().assignments.find(
+    (a) => a.kind === 'new' && a.checked === 0,
+  )
+  assert(newDuring !== undefined, 'bootstrap new slot for during-bootstrap markDone')
+  completeProblemAssignment(newDuring!.id, newDuring!.problem_id, 'hard', 0)
+  const duringRow = db
+    .prepare('SELECT next_review_at, interval_days FROM problems WHERE id = ?')
+    .get(newDuring!.problem_id) as { next_review_at: string; interval_days: number }
+  const duringSpan = daysBetween(todayStr(), duringRow.next_review_at)
+  const duringJitter = bootstrapSpreadJitter(newDuring!.problem_id, true)
+  assert(
+    duringSpan === duringRow.interval_days + totalDays + duringJitter,
+    `during-bootstrap span=${duringSpan}, want ${duringRow.interval_days}+${totalDays}+${duringJitter}`,
+  )
+  assert(duringSpan > postSpan, 'during-bootstrap deferral must exceed normal SR span')
+
+  cancelBootstrap()
+  checkInvariants('bootstrap vs normal markDone deferral')
+  console.log('  bootstrap vs normal markDone ok')
+}
+
 // first_completed_at: set on first mark done, preserved on re-rating; review_log append-only
 {
   const undone = getSnapshot().problems.find(
@@ -1151,10 +1587,77 @@ console.log('mitigations:')
   updateSetting('goal_date', addDays(todayStr(), -14))
   ensureToday()
   snapM = getSnapshot()
-  assert(snapM.goal.reason.includes('Past goal'), `past goal msg: ${snapM.goal.reason}`)
+  assert(snapM.goal.reason.includes('Past Goal'), `past goal msg: ${snapM.goal.reason}`)
   assert(snapM.pacing.reviewsToday > 0 || snapM.pacing.newToday > 0, 'still assigns past goal')
   updateSetting('goal_date', savedGoal)
   console.log('  past goal: still assigns')
+}
+
+// Progress rings update live after first completion (snapshot + pacing)
+{
+  const before = getSnapshot()
+  const keptDoneBefore = before.pacing.doneKept
+  const undone = before.problems.find(
+    (p) => p.is_custom === 0 && p.is_excluded === 0 && p.first_completed_at === null,
+  )!
+  completeProblem(undone.id, 'easy', 0)
+  const after = getSnapshot()
+  assert(after.pacing.doneKept === keptDoneBefore + 1, 'NeetCode ring doneKept updates live')
+  addProblem({
+    title: 'Ring Live Test',
+    slug: 'ring-live-test',
+    difficulty: 'Easy',
+    topic: 'Arrays & Hashing',
+  })
+  const custom = getSnapshot().problems.find((p) => p.slug === 'ring-live-test')!
+  const customDoneBefore = getSnapshot().customDone
+  completeProblem(custom.id, 'easy', 0)
+  const afterCustom = getSnapshot()
+  assert(afterCustom.customDone === customDoneBefore + 1, 'Bonus ring customDone updates live')
+  assert(afterCustom.customEasy >= 1, 'Bonus ring easy segment updates live')
+  assert(
+    after.keptEasy + after.keptMedium + after.keptHard === after.pacing.doneKept,
+    'NeetCode ring difficulty segments sum to doneKept',
+  )
+  assert(
+    afterCustom.customEasy + afterCustom.customMedium + afterCustom.customHard ===
+      afterCustom.customDone,
+    'Bonus ring difficulty segments sum to customDone',
+  )
+  db.prepare('DELETE FROM review_log WHERE problem_id = ?').run(custom.id)
+  db.prepare('DELETE FROM today_assignments WHERE problem_id = ?').run(custom.id)
+  db.prepare('DELETE FROM problems WHERE slug = ?').run('ring-live-test')
+  console.log('  progress rings: live snapshot update ok')
+}
+
+// Final polish: settings save, cancel bootstrap, idempotent snapshot, day rollover
+{
+  cancelBootstrap()
+  const ids = getSnapshot().bootstrapCandidates.slice(0, 4).map((p) => p.id)
+  assert(ids.length >= 2, 'need bootstrap candidates for cancel test')
+  startBootstrap(ids, 2, 0)
+  assert(getSnapshot().bootstrapActive, 'bootstrap active before cancel')
+  cancelBootstrap()
+  assert(!getSnapshot().bootstrapActive, 'cancelBootstrap clears active flag')
+  assert(getSetting('bootstrap_active') !== '1', 'cancelBootstrap clears bootstrap_active setting')
+
+  const before = getAppSettings()
+  saveSettings({ ...before, review_daily_target: before.review_daily_target })
+  const snap1 = getSnapshot()
+  const snap2 = getSnapshot()
+  assert(
+    snap1.assignments.map((a) => a.id).join(',') === snap2.assignments.map((a) => a.id).join(','),
+    'getSnapshot idempotent across consecutive reads',
+  )
+
+  const dayBefore = todayStr()
+  advanceDays(1)
+  ensureToday()
+  assert(todayStr() !== dayBefore, 'day rollover advances simulated date')
+  const afterRoll = getSnapshot()
+  assert(afterRoll.assignments.every((a) => a.is_extra !== 1), 'extras cleared on new day')
+  checkInvariants('final polish')
+  console.log('  final polish ok')
 }
 
 // exhaust: mark everything done, verify the all-done state is calm

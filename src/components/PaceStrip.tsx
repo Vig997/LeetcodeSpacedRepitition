@@ -67,7 +67,7 @@ export default function PaceStrip({ pacing }: { pacing: PacingResult }) {
             Bootstrap progress
           </div>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <Stat label="Baseline left" value={pacing.bootstrapRemaining} />
+            <Stat label="Bootstrap left" value={pacing.bootstrapRemaining} />
             <Stat label="Bootstrap period" value={`${pacing.bootstrapTotalDays} days`} />
             <Stat label="~Days left" value={pacing.bootstrapDaysRemaining} />
             <Stat label="Due today" value={pacing.bootstrapDue} />
@@ -76,7 +76,7 @@ export default function PaceStrip({ pacing }: { pacing: PacingResult }) {
             <div className="mt-3">
               <div className="mb-1 flex justify-between text-xs text-gray-500">
                 <span>
-                  {pacing.bootstrapBaselineDone} of {pacing.bootstrapPoolTotal} baselined
+                  {pacing.bootstrapBaselineDone} of {pacing.bootstrapPoolTotal} bootstrapped
                 </span>
                 <span>{progressPct}%</span>
               </div>

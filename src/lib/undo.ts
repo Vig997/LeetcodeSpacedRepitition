@@ -124,6 +124,22 @@ export function recordUndo(entry: Omit<UndoEntry, 'day'>): void {
   persist()
 }
 
+/** Same-day undo snapshot for a specific Today row (if it was the last rated action). */
+export function undoMetaForAssignment(
+  assignmentId: number,
+): Pick<UndoEntry, 'before' | 'topicBefore' | 'wasFirstCompletion' | 'wasBootstrap'> | null {
+  hydrate()
+  if (!lastUndo || lastUndo.day !== todayStr() || lastUndo.assignmentId !== assignmentId) {
+    return null
+  }
+  return {
+    before: lastUndo.before,
+    topicBefore: lastUndo.topicBefore,
+    wasFirstCompletion: lastUndo.wasFirstCompletion,
+    wasBootstrap: lastUndo.wasBootstrap,
+  }
+}
+
 /** Attach the Today assignment id after checkAssignment (Dashboard path). */
 export function setLastUndoAssignmentId(assignmentId: number): void {
   hydrate()

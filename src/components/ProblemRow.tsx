@@ -35,12 +35,12 @@ export default function ProblemRow({
         {p.title}
         {p.is_custom === 1 && (
           <span className="ml-2 rounded bg-purple-900/60 px-1.5 py-0.5 text-[10px] text-purple-300">
-            bonus
+            Bonus
           </span>
         )}
         {p.status === 'mastered' && (
           <span className="ml-2 rounded bg-emerald-900/60 px-1.5 py-0.5 text-[10px] text-emerald-300">
-            mastered
+            Mastered
           </span>
         )}
       </span>

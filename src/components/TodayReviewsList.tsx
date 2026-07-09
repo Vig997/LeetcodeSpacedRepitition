@@ -3,7 +3,8 @@ import type { AssignmentWithProblem } from '../lib/todayAssignments'
 
 interface Props {
   assignments: AssignmentWithProblem[]
-  onCheck: (a: AssignmentWithProblem) => void
+  onToggle: (a: AssignmentWithProblem) => void
+  onEdit?: (a: AssignmentWithProblem) => void
   onAddExtra?: () => void
   onRemoveExtra?: (a: AssignmentWithProblem) => void
   canAddExtra?: boolean
@@ -11,7 +12,8 @@ interface Props {
 
 export default function TodayReviewsList({
   assignments,
-  onCheck,
+  onToggle,
+  onEdit,
   onAddExtra,
   onRemoveExtra,
   canAddExtra = true,
@@ -30,12 +32,12 @@ export default function TodayReviewsList({
             className="rounded-md border border-gray-700 px-2.5 py-1 text-xs text-gray-300 transition hover:border-emerald-700 hover:text-emerald-300 disabled:cursor-not-allowed disabled:opacity-40"
             title="Add one more review for today only (resets tomorrow)"
           >
-            + Extra review
+            + Extra Review
           </button>
         )}
       </div>
       {assignments.length === 0 ? (
-        <p className="text-sm text-gray-500">No reviews due — you're caught up!</p>
+        <p className="text-sm text-gray-500">No Reviews Due — You're Caught Up!</p>
       ) : (
         <ul className="divide-y divide-gray-800/70">
           {assignments.map((a) => (
@@ -43,27 +45,36 @@ export default function TodayReviewsList({
               <input
                 type="checkbox"
                 checked={a.checked === 1}
-                disabled={a.checked === 1}
-                onChange={() => onCheck(a)}
-                className="h-4 w-4 cursor-pointer accent-emerald-500 disabled:cursor-default"
+                onChange={() => onToggle(a)}
+                className="h-4 w-4 cursor-pointer accent-emerald-500"
               />
               <span
                 className={`flex-1 text-sm ${
-                  a.checked ? 'text-gray-600 line-through' : 'text-gray-200'
+                  a.checked === 1 ? 'text-gray-600 line-through' : 'text-gray-200'
                 }`}
               >
                 {a.problem.title}
                 {a.problem.status === 'bootstrap' && (
                   <span className="ml-2 rounded bg-sky-900/60 px-1.5 py-0.5 text-[10px] text-sky-300">
-                    baseline
+                    Bootstrap
                   </span>
                 )}
                 {a.is_extra === 1 && (
                   <span className="ml-2 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-400">
-                    extra
+                    Extra
                   </span>
                 )}
               </span>
+              {a.checked === 1 && a.before_json && onEdit && (
+                <button
+                  type="button"
+                  onClick={() => onEdit(a)}
+                  className="rounded px-1.5 py-0.5 text-[10px] text-gray-500 transition hover:bg-gray-800 hover:text-sky-300"
+                  title="Edit rating and hints for today"
+                >
+                  Edit
+                </button>
+              )}
               <DifficultyBadge difficulty={a.problem.difficulty} />
               <TopicBadge topic={a.problem.topic} />
               {a.is_extra === 1 && a.checked === 0 && onRemoveExtra && (

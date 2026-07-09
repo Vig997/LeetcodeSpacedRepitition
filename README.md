@@ -43,7 +43,7 @@ Windows may warn about an unknown publisher (unsigned personal build) — that's
   row, rate it (Easy / Medium / Hard / Forgot + hints), done. There's an
   **Undo rating** button if you misclick (saved for the same calendar day even if you close the app).
 - **Bootstrap (optional)** — if you already finished a bunch of problems, you
-  can baseline-review them at a daily cap before adding new ones. Or skip it
+  can bootstrap-review them at a daily cap before adding new ones. Or skip it
   and just start from scratch.
 - **Problems** — Kept list in NeetCode topic order, Removed section, search /
   filters, Mark Done, Log Review, move stuff in/out of Removed, add customs.
@@ -51,10 +51,12 @@ Windows may warn about an unknown publisher (unsigned personal build) — that's
   Sliders don't save until you hit **Save settings**.
 
 I also capped daily load at 10 so you don't get buried, and Today · New stays
-locked for the day (finishing one doesn't instantly pull the next until
-tomorrow). If you finish early and want more, use **+ Extra review** /
-**+ Extra new** on the Dashboard — same-day only; tomorrow goes back to your
-normal paced set.
+day-locked like reviews (you get your paced count each morning; finishing one
+doesn't pull the next until tomorrow). If you want more same-day, use **+ Extra
+review** / **+ Extra new** on the Dashboard — extras reset tomorrow.
+
+The app day rolls at **3:00 AM** local time (not midnight), so late-night sessions
+keep the same Today list until 3am.
 
 ## Run from source
 

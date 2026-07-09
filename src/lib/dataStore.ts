@@ -11,6 +11,10 @@ import {
   addExtraReview as insertExtraReview,
   addExtraNew as insertExtraNew,
   removeExtraAssignment as deleteExtraAssignment,
+  getTodayLoadSummary,
+  buildAssignmentRatingMeta,
+  editAssignmentRating as updateAssignmentRating,
+  uncheckAssignment as revertAssignmentCheck,
 } from './todayAssignments'
 import {
   applyReview,
@@ -32,7 +36,7 @@ import {
 } from './undo'
 import { getDbOpenError } from './db'
 import type { AppSettings, Problem, Rating } from './types'
-import type { AssignmentWithProblem } from './todayAssignments'
+import type { AssignmentWithProblem, TodayLoadSummary } from './todayAssignments'
 import type { GoalReachability, PacingResult } from './pacing'
 import type { PaceAdvice } from './paceAdvice'
 
@@ -77,6 +81,8 @@ export function checkDayRollover(): void {
 export interface Snapshot {
   problems: Problem[]
   assignments: AssignmentWithProblem[]
+  /** Actual Today list counts (DB); updates when extras are added or removed. */
+  todayLoad: TodayLoadSummary
   pacing: PacingResult
   goal: GoalReachability
   advice: PaceAdvice
@@ -91,6 +97,9 @@ export interface Snapshot {
   customEasy: number
   customMedium: number
   customHard: number
+  keptEasy: number
+  keptMedium: number
+  keptHard: number
   /** True when the last rating/mark-done today can be undone (same calendar day). */
   canUndo: boolean
 }
@@ -114,10 +123,14 @@ export function getSnapshot(): Snapshot {
     .all() as Problem[]
 
   const custom = problems.filter((p) => p.is_custom === 1)
+  const keptDone = problems.filter(
+    (p) => p.is_custom === 0 && p.is_excluded === 0 && p.first_completed_at !== null,
+  )
 
   cache = {
     problems,
     assignments: getTodayAssignments(),
+    todayLoad: getTodayLoadSummary(),
     pacing: computePacing(),
     goal: goalReachability(),
     advice: computePaceAdvice(),
@@ -134,9 +147,18 @@ export function getSnapshot(): Snapshot {
     ),
     customTotal: custom.length,
     customDone: custom.filter((p) => p.first_completed_at !== null).length,
-    customEasy: custom.filter((p) => p.difficulty === 'Easy').length,
-    customMedium: custom.filter((p) => p.difficulty === 'Medium').length,
-    customHard: custom.filter((p) => p.difficulty === 'Hard').length,
+    customEasy: custom.filter(
+      (p) => p.first_completed_at !== null && p.difficulty === 'Easy',
+    ).length,
+    customMedium: custom.filter(
+      (p) => p.first_completed_at !== null && p.difficulty === 'Medium',
+    ).length,
+    customHard: custom.filter(
+      (p) => p.first_completed_at !== null && p.difficulty === 'Hard',
+    ).length,
+    keptEasy: keptDone.filter((p) => p.difficulty === 'Easy').length,
+    keptMedium: keptDone.filter((p) => p.difficulty === 'Medium').length,
+    keptHard: keptDone.filter((p) => p.difficulty === 'Hard').length,
     canUndo: hasUndo(),
   }
   return cache
@@ -146,8 +168,10 @@ export function getSnapshot(): Snapshot {
 
 /** Rate a due review (Dashboard check or Problems tab Log Review). */
 export function rateReview(problemId: number, rating: Rating, hints: number): void {
+  const p = db.prepare('SELECT * FROM problems WHERE id = ?').get(problemId) as Problem
+  const meta = buildAssignmentRatingMeta(p, rating, hints)
   applyReview(problemId, rating, hints)
-  checkAssignmentForProblem(problemId)
+  checkAssignmentForProblem(problemId, meta)
   notify()
 }
 
@@ -157,17 +181,44 @@ export function rateReviewAssignment(
   problemId: number,
   rating: Rating,
   hints: number,
-): void {
-  applyReview(problemId, rating, hints)
-  checkAssignment(assignmentId)
-  setLastUndoAssignmentId(assignmentId)
-  notify()
+): { ok: boolean; message: string } {
+  try {
+    const today = todayStr()
+    const row = db
+      .prepare('SELECT * FROM today_assignments WHERE id = ? AND assignment_date = ?')
+      .get(assignmentId, today) as { id: number; problem_id: number; checked: number } | undefined
+    if (!row) return { ok: false, message: 'Not on Today anymore' }
+    if (row.problem_id !== problemId) return { ok: false, message: 'Assignment mismatch' }
+    if (row.checked === 1) return { ok: false, message: 'Already checked off' }
+
+    const p = db.prepare('SELECT * FROM problems WHERE id = ?').get(problemId) as Problem | undefined
+    if (!p) return { ok: false, message: 'Problem no longer exists' }
+
+    const meta = buildAssignmentRatingMeta(p, rating, hints)
+    applyReview(problemId, rating, hints)
+    checkAssignment(assignmentId, meta)
+    setLastUndoAssignmentId(assignmentId)
+
+    const after = db
+      .prepare('SELECT checked FROM today_assignments WHERE id = ?')
+      .get(assignmentId) as { checked: number } | undefined
+    if (!after || after.checked !== 1) {
+      return { ok: false, message: 'Could not check off — try again' }
+    }
+
+    notify()
+    return { ok: true, message: 'Review saved' }
+  } catch {
+    return { ok: false, message: 'Could not save rating — try again' }
+  }
 }
 
 /** First completion (Today · New check or Problems tab Mark Done). */
 export function completeProblem(problemId: number, rating: Rating, hints: number): void {
+  const p = db.prepare('SELECT * FROM problems WHERE id = ?').get(problemId) as Problem
+  const meta = buildAssignmentRatingMeta(p, rating, hints)
   markDone(problemId, rating, hints)
-  checkAssignmentForProblem(problemId)
+  checkAssignmentForProblem(problemId, meta)
   notify()
 }
 
@@ -176,11 +227,54 @@ export function completeProblemAssignment(
   problemId: number,
   rating: Rating,
   hints: number,
-): void {
-  markDone(problemId, rating, hints)
-  checkAssignment(assignmentId)
-  setLastUndoAssignmentId(assignmentId)
-  notify()
+): { ok: boolean; message: string } {
+  try {
+    const today = todayStr()
+    const row = db
+      .prepare('SELECT * FROM today_assignments WHERE id = ? AND assignment_date = ?')
+      .get(assignmentId, today) as { id: number; problem_id: number; checked: number } | undefined
+    if (!row) return { ok: false, message: 'Not on Today anymore' }
+    if (row.problem_id !== problemId) return { ok: false, message: 'Assignment mismatch' }
+    if (row.checked === 1) return { ok: false, message: 'Already checked off' }
+
+    const p = db.prepare('SELECT * FROM problems WHERE id = ?').get(problemId) as Problem | undefined
+    if (!p) return { ok: false, message: 'Problem no longer exists' }
+
+    const meta = buildAssignmentRatingMeta(p, rating, hints)
+    markDone(problemId, rating, hints)
+    checkAssignment(assignmentId, meta)
+    setLastUndoAssignmentId(assignmentId)
+
+    const after = db
+      .prepare('SELECT checked FROM today_assignments WHERE id = ?')
+      .get(assignmentId) as { checked: number } | undefined
+    if (!after || after.checked !== 1) {
+      return { ok: false, message: 'Could not check off — try again' }
+    }
+
+    notify()
+    return { ok: true, message: 'Marked done' }
+  } catch {
+    return { ok: false, message: 'Could not save rating — try again' }
+  }
+}
+
+/** Update rating + hints for a completed Today assignment (same calendar day). */
+export function editAssignmentRating(
+  assignmentId: number,
+  rating: Rating,
+  hints: number,
+): { ok: boolean; message: string } {
+  const result = updateAssignmentRating(assignmentId, rating, hints)
+  if (result.ok) notify()
+  return result
+}
+
+/** Revert a completed Today assignment to unchecked (same calendar day). */
+export function uncheckAssignment(assignmentId: number): { ok: boolean; message: string } {
+  const result = revertAssignmentCheck(assignmentId)
+  if (result.ok) notify()
+  return result
 }
 
 /** Undo the most recent rating / mark-done (same calendar day). */
@@ -226,7 +320,7 @@ export function moveToRemoved(problemId: number): void {
   notify()
 }
 
-/** Add a problem; NeetCode slug match → Kept NeetCode, else custom bonus. */
+/** Add a problem; matching LeetCode ID on a Removed row re-enables it, else bonus custom. */
 export function addProblem(input: {
   title: string
   slug: string

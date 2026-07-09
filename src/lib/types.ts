@@ -48,6 +48,11 @@ export interface TodayAssignment {
   reconciled: 0 | 1
   /** 1 = user-added same-day extra (ignored by paced trim / day-lock). */
   is_extra: 0 | 1
+  /** Rating chosen when this row was checked today (editable until day rollover). */
+  session_rating: Rating | null
+  session_hints: number | null
+  /** JSON snapshot of problem + topic stats before the session rating (for same-day edits). */
+  before_json: string | null
 }
 
 export interface AppSettings {

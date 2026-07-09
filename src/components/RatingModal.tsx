@@ -4,6 +4,9 @@ import type { Problem, Rating } from '../lib/types'
 interface Props {
   problem: Problem
   title: string
+  initialRating?: Rating | null
+  initialHints?: number
+  saveLabel?: string
   onSave: (rating: Rating, hints: number) => void
   onCancel: () => void
 }
@@ -15,9 +18,17 @@ const RATINGS: { value: Rating; label: string; desc: string; cls: string }[] = [
   { value: 'forgot', label: 'Forgot', desc: "Couldn't solve", cls: 'border-red-700 bg-red-900/40 text-red-300 hover:bg-red-900/70' },
 ]
 
-export default function RatingModal({ problem, title, onSave, onCancel }: Props) {
-  const [rating, setRating] = useState<Rating | null>(null)
-  const [hints, setHints] = useState(0)
+export default function RatingModal({
+  problem,
+  title,
+  initialRating = null,
+  initialHints = 0,
+  saveLabel = 'Save',
+  onSave,
+  onCancel,
+}: Props) {
+  const [rating, setRating] = useState<Rating | null>(initialRating)
+  const [hints, setHints] = useState(initialHints)
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={onCancel}>
@@ -45,7 +56,7 @@ export default function RatingModal({ problem, title, onSave, onCancel }: Props)
         </div>
 
         <label className="mb-5 flex items-center gap-3 text-sm text-gray-300">
-          Hints used:
+          Hints Used:
           <div className="flex items-center gap-1">
             {[0, 1, 2, 3].map((h) => (
               <button
@@ -75,10 +86,12 @@ export default function RatingModal({ problem, title, onSave, onCancel }: Props)
           <button
             type="button"
             disabled={rating === null}
-            onClick={() => rating && onSave(rating, hints)}
+            onClick={() => {
+              if (rating) onSave(rating, hints)
+            }}
             className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition enabled:hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            Save
+            {saveLabel}
           </button>
         </div>
       </div>

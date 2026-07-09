@@ -1,12 +1,23 @@
 export const DEFAULT_GOAL_DATE = '2026-09-01'
 
-/** Local calendar day as YYYY-MM-DD. */
-export function todayStr(): string {
-  const d = new Date()
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
+/** Local hour when the app day rolls (0–23). Before this, "today" is still yesterday. */
+export const DAY_ROLLOVER_HOUR = 3
+
+/** App study day for a local timestamp — rolls at {@link DAY_ROLLOVER_HOUR}:00, not midnight. */
+export function appDayFromDate(d: Date): string {
+  const shifted = new Date(d)
+  if (shifted.getHours() < DAY_ROLLOVER_HOUR) {
+    shifted.setDate(shifted.getDate() - 1)
+  }
+  const y = shifted.getFullYear()
+  const m = String(shifted.getMonth() + 1).padStart(2, '0')
+  const day = String(shifted.getDate()).padStart(2, '0')
   return `${y}-${m}-${day}`
+}
+
+/** App study day as YYYY-MM-DD (3:00 local rollover by default). */
+export function todayStr(): string {
+  return appDayFromDate(new Date())
 }
 
 export function addDays(dateStr: string, days: number): string {
@@ -68,4 +79,9 @@ export function formatDisplayDate(dateStr: string): string {
 
 export function nowISO(): string {
   return new Date().toISOString()
+}
+
+/** App study day (YYYY-MM-DD) for an ISO timestamp — same 3am rollover as {@link todayStr}. */
+export function localDayFromISO(iso: string): string {
+  return appDayFromDate(new Date(iso))
 }

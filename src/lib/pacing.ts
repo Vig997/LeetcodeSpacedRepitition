@@ -299,42 +299,42 @@ export function goalReachability(
   if (bootstrapActive) {
     const newNote =
       getBootstrapNewPerDay() > 0
-        ? `${getBootstrapNewPerDay()} new/day enabled during bootstrap`
-        : 'new problems paused until baseline finishes'
+        ? `${getBootstrapNewPerDay()} New/Day Enabled During Bootstrap`
+        : 'New Problems Paused Until Bootstrap Finishes'
     return {
       ...base,
       onTrack: perDay * daysLeftAfterBootstrap >= remainingUndone || remainingUndone === 0,
-      reason: `${agg.bootstrapRemaining} baseline left · ~${daysInBootstrap} bootstrap days · ${newNote}`,
+      reason: `${agg.bootstrapRemaining} Bootstrap Left · ~${daysInBootstrap} Bootstrap Days · ${newNote}`,
     }
   }
 
   if (remainingUndone <= 0) {
-    return { ...base, onTrack: true, reason: 'All Kept NeetCode problems are done' }
+    return { ...base, onTrack: true, reason: 'All Kept NeetCode Problems Are Done' }
   }
   if (daysLeft <= 0) {
     return {
       ...base,
       onTrack: false,
-      reason: `Past goal ${s.goal_date} — ${remainingUndone} undone Kept; update goal date in Settings`,
+      reason: `Past Goal ${s.goal_date} — ${remainingUndone} Undone Kept; Update Goal Date in Settings`,
     }
   }
   if (daysLeftAfterBootstrap <= 0) {
     return {
       ...base,
       onTrack: false,
-      reason: `No days left before ${s.goal_date} for ${remainingUndone} remaining undone Kept problems`,
+      reason: `No Days Left Before ${s.goal_date} for ${remainingUndone} Remaining Undone Kept Problems`,
     }
   }
   if (perDay * daysLeftAfterBootstrap < remainingUndone) {
     return {
       ...base,
       onTrack: false,
-      reason: `Need ~${Math.ceil(neededNewPerDay)} new/day for ${remainingUndone} undone; you set ${perDayLabel}`,
+      reason: `Need ~${Math.ceil(neededNewPerDay)} New/Day for ${remainingUndone} Undone; You Set ${perDayLabel}`,
     }
   }
   return {
     ...base,
     onTrack: true,
-    reason: `${perDayLabel} new/day covers ${remainingUndone} undone in ${daysLeftAfterBootstrap} days until ${s.goal_date}`,
+    reason: `${perDayLabel} New/Day Covers ${remainingUndone} Undone in ${daysLeftAfterBootstrap} Days Until ${s.goal_date}`,
   }
 }

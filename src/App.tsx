@@ -3,7 +3,7 @@ import Dashboard from './pages/Dashboard'
 import Settings from './pages/Settings'
 import BootstrapBadge from './components/BootstrapBadge'
 import { useProblems } from './hooks/useProblems'
-import { checkDayRollover, undoLastRating } from './lib/dataStore'
+import { checkDayRollover, undoLastRating, cancelBootstrap } from './lib/dataStore'
 
 // Problems tab is the heavy list — load on first open. Settings stays mounted
 // (hidden) so draft slider state isn't lost when you switch tabs.
@@ -21,7 +21,7 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('dashboard')
   const snap = useProblems()
 
-  // App left open past midnight: reconcile yesterday + assign a fresh Today.
+  // App left open past 3am: reconcile prior study day + assign a fresh Today.
   useEffect(() => {
     const id = setInterval(checkDayRollover, 60_000)
     return () => clearInterval(id)
@@ -54,13 +54,22 @@ export default function App() {
             className="rounded-lg border border-gray-700 px-3 py-1.5 text-xs text-gray-300 transition hover:border-amber-700 hover:text-amber-300"
             title="Undo last rating (same calendar day, survives restart)"
           >
-            Undo rating
+            Undo Rating
           </button>
         )}
         {snap.bootstrapActive ? (
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-700/60 bg-sky-900/40 px-3 py-1 text-xs font-medium text-sky-300">
-            ⟳ Bootstrap Active
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-700/60 bg-sky-900/40 px-3 py-1 text-xs font-medium text-sky-300">
+              ⟳ Bootstrap Active
+            </span>
+            <button
+              type="button"
+              onClick={() => cancelBootstrap()}
+              className="rounded-lg border border-red-800/70 bg-red-950/40 px-3 py-1 text-xs font-medium text-red-300 transition hover:border-red-600 hover:bg-red-900/50"
+            >
+              Cancel Bootstrap
+            </button>
+          </div>
         ) : (
           snap.bootstrapCompleted && (
             <BootstrapBadge completedOn={snap.bootstrapCompletedOn} />

@@ -11,7 +11,7 @@ interface Props {
 }
 
 /**
- * User-initiated bootstrap: choose which done Kept problems to baseline-review
+ * User-initiated bootstrap: choose which done Kept problems to bootstrap-review
  * and how many per day; the scheduler staggers them across days.
  */
 export default function StartBootstrapModal({
@@ -68,7 +68,7 @@ export default function StartBootstrapModal({
       >
         <h3 className="mb-1 text-lg font-semibold text-gray-100">Start Bootstrap</h3>
         <p className="mb-4 text-xs text-gray-500">
-          Baseline-review the selected done problems.
+          Bootstrap-review the selected done problems.
           {assignNew
             ? ' New Kept problems will also be assigned each day during bootstrap.'
             : ' New problems stay locked until the bootstrap finishes.'}
@@ -76,7 +76,7 @@ export default function StartBootstrapModal({
 
         <div className="mb-3 flex flex-wrap items-center gap-3">
           <label className="flex items-center gap-2 text-sm text-gray-300">
-            Reviews/day
+            Reviews/Day
             <input
               type="text"
               inputMode="numeric"
@@ -95,7 +95,7 @@ export default function StartBootstrapModal({
             onClick={toggleAll}
             className="rounded-md border border-gray-700 px-2.5 py-1 text-xs text-gray-300 hover:bg-gray-800"
           >
-            {selected.size === candidates.length ? 'Clear all' : 'Select all'}
+            {selected.size === candidates.length ? 'Clear All' : 'Select All'}
           </button>
         </div>
 
@@ -106,11 +106,11 @@ export default function StartBootstrapModal({
             onChange={(e) => setAssignNew(e.target.checked)}
             className="h-3.5 w-3.5 accent-sky-500"
           />
-          Also assign new problems during bootstrap
+          Also Assign New Problems During Bootstrap
         </label>
         {assignNew && (
           <label className="mb-4 flex items-center gap-2 pl-5 text-sm text-gray-300">
-            New/day
+            New/Day
             <input
               type="text"
               inputMode="numeric"

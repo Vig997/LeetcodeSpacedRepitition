@@ -5,7 +5,8 @@ interface Props {
   assignments: AssignmentWithProblem[]
   /** When > 0, bootstrap has optional new/day enabled (empty state copy differs). */
   bootstrapNewPerDay?: number
-  onCheck: (a: AssignmentWithProblem) => void
+  onToggle: (a: AssignmentWithProblem) => void
+  onEdit?: (a: AssignmentWithProblem) => void
   onAddExtra?: () => void
   onRemoveExtra?: (a: AssignmentWithProblem) => void
   canAddExtra?: boolean
@@ -14,7 +15,8 @@ interface Props {
 export default function TodayNewList({
   assignments,
   bootstrapNewPerDay = 0,
-  onCheck,
+  onToggle,
+  onEdit,
   onAddExtra,
   onRemoveExtra,
   canAddExtra = true,
@@ -33,15 +35,15 @@ export default function TodayNewList({
             className="rounded-md border border-gray-700 px-2.5 py-1 text-xs text-gray-300 transition hover:border-sky-700 hover:text-sky-300 disabled:cursor-not-allowed disabled:opacity-40"
             title="Add the next undone Kept problem for today only (resets tomorrow)"
           >
-            + Extra new
+            + Extra New
           </button>
         )}
       </div>
       {assignments.length === 0 ? (
         <p className="text-sm text-gray-500">
           {bootstrapNewPerDay > 0
-            ? `Bootstrap new pace: ${bootstrapNewPerDay}/day — use + Extra new if you want more today`
-            : 'On pace — use + Extra new if you want one more today'}
+            ? `Bootstrap New Pace: ${bootstrapNewPerDay}/Day — Use + Extra New If You Want More Today`
+            : 'On Pace — Use + Extra New If You Want One More Today'}
         </p>
       ) : (
         <ul className="divide-y divide-gray-800/70">
@@ -50,22 +52,31 @@ export default function TodayNewList({
               <input
                 type="checkbox"
                 checked={a.checked === 1}
-                disabled={a.checked === 1}
-                onChange={() => onCheck(a)}
-                className="h-4 w-4 cursor-pointer accent-sky-500 disabled:cursor-default"
+                onChange={() => onToggle(a)}
+                className="h-4 w-4 cursor-pointer accent-sky-500"
               />
               <span
                 className={`flex-1 text-sm ${
-                  a.checked ? 'text-gray-600 line-through' : 'text-gray-200'
+                  a.checked === 1 ? 'text-gray-600 line-through' : 'text-gray-200'
                 }`}
               >
                 {a.problem.title}
                 {a.is_extra === 1 && (
                   <span className="ml-2 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-400">
-                    extra
+                    Extra
                   </span>
                 )}
               </span>
+              {a.checked === 1 && a.before_json && onEdit && (
+                <button
+                  type="button"
+                  onClick={() => onEdit(a)}
+                  className="rounded px-1.5 py-0.5 text-[10px] text-gray-500 transition hover:bg-gray-800 hover:text-sky-300"
+                  title="Edit rating and hints for today"
+                >
+                  Edit
+                </button>
+              )}
               <DifficultyBadge difficulty={a.problem.difficulty} />
               <TopicBadge topic={a.problem.topic} />
               {a.is_extra === 1 && a.checked === 0 && onRemoveExtra && (

@@ -183,11 +183,11 @@ function uncheckedYesterday(kind: 'review' | 'new'): number {
 function settingLabel(key: PaceAdviceSetting): string {
   switch (key) {
     case 'new_per_day':
-      return 'New/day'
+      return 'New/Day'
     case 'review_daily_target':
-      return 'Reviews/day'
+      return 'Reviews/Day'
     case 'bootstrap_daily_cap':
-      return 'Bootstrap reviews/day'
+      return 'Bootstrap Reviews/Day'
   }
 }
 
@@ -255,11 +255,11 @@ function buildBootstrapAdvice(
   const capIdx = suggestions.findIndex((s) => s.setting === 'bootstrap_daily_cap')!
   const currentCap = settings.bootstrap_daily_cap
 
-  let headline = 'Bootstrap in progress'
+  let headline = 'Bootstrap In Progress'
   let detail = goal.reason
 
   if (coldStart) {
-    detail += ' Advice will sharpen after a few days of baseline reviews.'
+    detail += ' Advice will sharpen after a few days of bootstrap reviews.'
   } else if (reviewFinishRate < REVIEW_FINISH_THRESHOLD) {
     const sustainable = clamp(
       Math.ceil(agg.avgReviewsDonePerDay) || REVIEW_FLOOR,
@@ -272,14 +272,14 @@ function buildBootstrapAdvice(
         'decrease',
         currentCap,
         sustainable,
-        `You finish ~${agg.avgReviewsDonePerDay.toFixed(1)} baseline reviews/day — lower the cap to match.`,
+        `You finish ~${agg.avgReviewsDonePerDay.toFixed(1)} bootstrap reviews/day — lower the cap to match.`,
       )
-      headline = 'Baseline load looks heavy'
+      headline = 'Bootstrap Load Looks Heavy'
       detail = `Review finish rate ${Math.round(reviewFinishRate * 100)}% over the last ${ADVICE_WINDOW_DAYS} days. ${goal.reason}`
     } else {
       suggestions[capIdx].why =
         'Cap matches what you usually finish during bootstrap.'
-      headline = 'Baseline pace is tight but doable'
+      headline = 'Bootstrap Pace Is Tight But Doable'
     }
   } else if (reviewFinishRate >= 0.9 && currentCap < SETTINGS_MAX && pacing.bootstrapRemaining > 0) {
     const bump = Math.min(currentCap + 1, SETTINGS_MAX)
@@ -288,13 +288,13 @@ function buildBootstrapAdvice(
       'increase',
       currentCap,
       bump,
-      'Strong finish rate — you can clear the baseline queue faster.',
+      'Strong finish rate — you can clear the bootstrap queue faster.',
     )
-    headline = 'Room to speed up bootstrap'
-    detail = `Finishing ${Math.round(reviewFinishRate * 100)}% of assigned baseline reviews. After bootstrap you need ~${Math.ceil(goal.neededNewPerDay)} new/day for ${goal.goalDate}.`
+    headline = 'Room to Speed Up Bootstrap'
+    detail = `Finishing ${Math.round(reviewFinishRate * 100)}% of assigned bootstrap reviews. After bootstrap you need ~${Math.ceil(goal.neededNewPerDay)} new/day for ${goal.goalDate}.`
   } else {
     suggestions[capIdx].why = 'Bootstrap cap matches your recent finish rate.'
-    headline = 'Bootstrap on track'
+    headline = 'Bootstrap On Track'
     detail = `${goal.reason} After bootstrap: ~${Math.ceil(goal.neededNewPerDay)} new/day needed for ${goal.remainingUndone} undone Kept.`
   }
 
@@ -306,7 +306,7 @@ function buildBootstrapAdvice(
       settings.new_per_day === 0 ? 'increase' : target > settings.new_per_day ? 'increase' : 'keep',
       settings.new_per_day,
       settings.new_per_day === 0 ? target : Math.max(settings.new_per_day, target),
-      `Plan ~${Math.ceil(goal.neededNewPerDay)} new/day after baseline for ${goal.goalDate}.`,
+      `Plan ~${Math.ceil(goal.neededNewPerDay)} new/day after bootstrap for ${goal.goalDate}.`,
     )
   }
 
@@ -378,7 +378,7 @@ function buildOverloadedAdvice(
 
   return {
     status: 'overloaded',
-    headline: 'Today load looks unsustainable',
+    headline: 'Today Load Looks Unsustainable',
     detail,
     windowDays: ADVICE_WINDOW_DAYS,
     metrics,
@@ -444,7 +444,7 @@ function buildBehindAdvice(
 
   return {
     status: 'behind',
-    headline: `Behind schedule for ${goal.goalDate}`,
+    headline: `Behind Schedule for ${goal.goalDate}`,
     detail,
     windowDays: ADVICE_WINDOW_DAYS,
     metrics,
@@ -523,7 +523,7 @@ function buildOnPaceAdvice(
 
   return {
     status: 'on_pace',
-    headline: `On pace for ${goal.goalDate}`,
+    headline: `On Pace for ${goal.goalDate}`,
     detail,
     windowDays: ADVICE_WINDOW_DAYS,
     metrics,
@@ -539,8 +539,8 @@ function buildPastGoalAdvice(
   const suggestions = baseSuggestions(settings)
   return {
     status: 'past_goal',
-    headline: `Past goal date (${goal.goalDate})`,
-    detail: `${goal.remainingUndone} undone Kept remain. Extend the goal date in Settings or raise new/day and finish reviews consistently.`,
+    headline: `Past Goal Date (${goal.goalDate})`,
+    detail: `${goal.remainingUndone} Undone Kept Remain. Extend the Goal Date in Settings or Raise New/Day and Finish Reviews Consistently.`,
     windowDays: ADVICE_WINDOW_DAYS,
     metrics,
     suggestions: suggestions.filter((s) => s.action !== 'keep'),
@@ -558,7 +558,7 @@ function buildColdStartAdvice(
   }
   return {
     status: goal.onTrack ? 'on_pace' : 'behind',
-    headline: goal.onTrack ? `On pace for ${goal.goalDate}` : `Behind schedule for ${goal.goalDate}`,
+    headline: goal.onTrack ? `On Pace for ${goal.goalDate}` : `Behind Schedule for ${goal.goalDate}`,
     detail: `${goal.reason} Keep working a few days — pace advice adapts from your finish rates.`,
     windowDays: ADVICE_WINDOW_DAYS,
     metrics,
@@ -606,7 +606,7 @@ export function computePaceAdvice(): PaceAdvice {
   if (goal.remainingUndone <= 0) {
     return {
       status: 'on_pace',
-      headline: 'All Kept problems done',
+      headline: 'All Kept Problems Done',
       detail: 'No pacing changes needed — enjoy maintenance reviews.',
       windowDays: ADVICE_WINDOW_DAYS,
       metrics,
@@ -614,7 +614,7 @@ export function computePaceAdvice(): PaceAdvice {
     }
   }
 
-  if (pacing.daysLeft <= 0 || goal.reason.startsWith('Past goal')) {
+  if (pacing.daysLeft <= 0 || goal.reason.startsWith('Past Goal')) {
     return buildPastGoalAdvice(settings, goal, metrics)
   }
 
