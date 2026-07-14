@@ -13,6 +13,7 @@ import {
 import ProgressRing from '../components/ProgressRing'
 import BonusRing from '../components/BonusRing'
 import PaceOverview from '../components/PaceOverview'
+import BootstrapPaceStats from '../components/BootstrapPaceStats'
 import TodayReviewsList from '../components/TodayReviewsList'
 import TodayNewList from '../components/TodayNewList'
 import RatingModal from '../components/RatingModal'
@@ -123,12 +124,15 @@ export default function Dashboard() {
         />
       </div>
 
-      <PaceOverview
-        goal={snap.goal}
-        pacing={snap.pacing}
-        advice={snap.advice}
-        todayLoad={snap.todayLoad}
-      />
+      <PaceOverview goal={snap.goal} pacing={snap.pacing} advice={snap.advice} />
+
+      {snap.bootstrapActive && (
+        <BootstrapPaceStats
+          goal={snap.goal}
+          pacing={snap.pacing}
+          todayLoad={snap.todayLoad}
+        />
+      )}
 
       {!snap.bootstrapActive && snap.bootstrapCandidates.length > 0 && (
         <div className="flex items-center justify-between rounded-xl border border-gray-800 bg-gray-900/40 px-4 py-2.5 text-sm text-gray-400">

@@ -172,7 +172,12 @@ export function computePacing(): PacingResult {
   const reviewCeiling = Math.min(s.review_daily_target, REVIEW_HARD_CAP)
   let reviewsToday: number
   if (bootstrapActive) {
-    reviewsToday = Math.min(s.bootstrap_daily_cap + unusedReviews, REVIEW_HARD_CAP)
+    const carried = unusedReviews
+    if (carried >= s.bootstrap_daily_cap) {
+      reviewsToday = Math.min(carried, REVIEW_HARD_CAP)
+    } else {
+      reviewsToday = Math.min(s.bootstrap_daily_cap, REVIEW_HARD_CAP)
+    }
   } else {
     let reviewsWanted = agg.srDueCount
     if (agg.bootstrapDue > 0) {

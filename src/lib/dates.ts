@@ -20,10 +20,24 @@ export function todayStr(): string {
   return appDayFromDate(new Date())
 }
 
-export function addDays(dateStr: string, days: number): string {
-  const [y, m, d] = dateStr.split('-').map(Number)
+/** YYYY-MM-DD from ISO or date-only string; null if invalid. */
+export function dateOnly(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  const trimmed = raw.trim()
+  const match = trimmed.match(/^(\d{4}-\d{2}-\d{2})/)
+  if (!match) return null
+  const [y, m, d] = match[1].split('-').map(Number)
   const dt = new Date(y, m - 1, d)
-  dt.setDate(dt.getDate() + days)
+  if (dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d) return null
+  return match[1]
+}
+
+export function addDays(dateStr: string, days: number): string {
+  const base = dateOnly(dateStr)
+  if (!base || !Number.isFinite(days)) return todayStr()
+  const [y, m, d] = base.split('-').map(Number)
+  const dt = new Date(y, m - 1, d)
+  dt.setDate(dt.getDate() + Math.round(days))
   const yy = dt.getFullYear()
   const mm = String(dt.getMonth() + 1).padStart(2, '0')
   const dd = String(dt.getDate()).padStart(2, '0')
@@ -72,9 +86,11 @@ export function parseGoalDateInput(raw: string): string | null {
   return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
 }
 
-export function formatDisplayDate(dateStr: string): string {
-  const [y, m, d] = dateStr.split('-').map(Number)
-  return `${m}/${d}/${y}`
+export function formatDisplayDate(dateStr: string | null | undefined): string {
+  const d = dateOnly(dateStr)
+  if (!d) return '—'
+  const [y, m, day] = d.split('-').map(Number)
+  return `${m}/${day}/${y}`
 }
 
 export function nowISO(): string {

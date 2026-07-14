@@ -1,6 +1,7 @@
 import { db } from './db'
 import { getSetting, setSetting, getNumberSetting, getGoalDate } from './settings'
 import { todayStr, addDays, daysUntil, nowISO, daysBetween } from './dates'
+import { capIntervalDays, computeNextReviewAt } from './reviewSchedule'
 import { recordUndo, snapshotProblem, snapshotTopicStats } from './undo'
 import type { Problem, Rating } from './types'
 
@@ -15,6 +16,9 @@ const BASE_SCORE: Record<Rating, number> = {
 export function effectiveScore(rating: Rating, hints: number): number {
   return Math.min(Math.max(BASE_SCORE[rating] - hints * 0.5, 0), 4)
 }
+
+/** Cap SR intervals so runaway compounding cannot blow up dates. */
+export { MAX_INTERVAL_DAYS, capIntervalDays } from './reviewSchedule'
 
 /** First interval when a problem is marked done (enters SR). */
 export function firstInterval(rating: Rating): number {
@@ -122,7 +126,9 @@ export function nextSchedule(
     ease = ease + 0.1
   }
 
-  interval = Math.max(1, Math.round(interval * repetitionMultiplier(repetitions) * pressure))
+  interval = capIntervalDays(
+    Math.max(1, Math.round(interval * repetitionMultiplier(repetitions) * pressure)),
+  )
   return { intervalDays: interval, ease, repetitions }
 }
 
@@ -146,6 +152,8 @@ function bootstrapRemaining(): number {
 export function isBootstrapActive(): boolean {
   if (getSetting('bootstrap_active') !== '1') return false
   if (bootstrapRemaining() > 0) return true
+  const totalDays = getNumberSetting('bootstrap_total_days', 0)
+  if (totalDays > 0) setSetting('bootstrap_last_total_days', totalDays)
   setSetting('bootstrap_active', '0')
   setSetting('bootstrap_new_per_day', 0)
   setSetting('bootstrap_pool_total', 0)
@@ -214,10 +222,7 @@ export function getBootstrapNewPerDay(): number {
 }
 
 /** Spread post-bootstrap-deferral clumps by 0–2 days per problem. */
-export function bootstrapSpreadJitter(problemId: number, duringBootstrap: boolean): number {
-  if (!duringBootstrap) return 0
-  return problemId % 3
-}
+export { bootstrapSpreadJitter } from './reviewSchedule'
 
 function scheduleNextReviewAt(
   problemId: number,
@@ -226,8 +231,7 @@ function scheduleNextReviewAt(
   duringBootstrap: boolean,
 ): string {
   const deferral = duringBootstrap ? getBootstrapTotalDays() : 0
-  const jitter = bootstrapSpreadJitter(problemId, duringBootstrap)
-  return addDays(today, srInterval + deferral + jitter)
+  return computeNextReviewAt(today, srInterval, problemId, deferral)
 }
 
 /**
@@ -320,6 +324,15 @@ export function applyReview(
   const p = db
     .prepare('SELECT * FROM problems WHERE id = ?')
     .get(problemId) as Problem
+
+  const lastLog = db
+    .prepare('SELECT reviewed_at FROM review_log WHERE problem_id = ? ORDER BY id DESC LIMIT 1')
+    .get(problemId) as { reviewed_at: string } | undefined
+  if (lastLog) {
+    const ms = Date.now() - new Date(lastLog.reviewed_at).getTime()
+    if (ms >= 0 && ms < 5000) return capIntervalDays(p.interval_days)
+  }
+
   const before = snapshotProblem(p)
   const wasBootstrap = p.status === 'bootstrap'
   const pressure = currentGoalPressure()
@@ -331,9 +344,11 @@ export function applyReview(
 
   if (isBaseline) {
     repetitions = p.repetitions + 1
-    srInterval = Math.max(
-      1,
-      Math.round(firstInterval(rating) * repetitionMultiplier(repetitions) * pressure),
+    srInterval = capIntervalDays(
+      Math.max(
+        1,
+        Math.round(firstInterval(rating) * repetitionMultiplier(repetitions) * pressure),
+      ),
     )
   } else {
     const next = nextSchedule(
@@ -415,9 +430,11 @@ export function markDone(
   const before = snapshotProblem(p)
   const pressure = currentGoalPressure()
   const repetitions = 1
-  const srInterval = Math.max(
-    1,
-    Math.round(firstInterval(rating) * repetitionMultiplier(repetitions) * pressure),
+  const srInterval = capIntervalDays(
+    Math.max(
+      1,
+      Math.round(firstInterval(rating) * repetitionMultiplier(repetitions) * pressure),
+    ),
   )
   const duringBootstrap = getSetting('bootstrap_active') === '1'
   const today = todayStr()

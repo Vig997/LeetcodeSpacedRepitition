@@ -2,6 +2,7 @@
 cd /d "%~dp0"
 echo ========================================
 echo  Update LeetCode SR
+echo  (rebuild for dev)
 echo ========================================
 echo.
 

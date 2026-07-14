@@ -529,10 +529,56 @@ export function ensureToday(): void {
 
   rolloverBootstrapNewSlots()
 
+  refreshTodayReviewSlots()
+  refreshTodayNewSlots()
+}
+
+/**
+ * Day-lock Today · Reviews during bootstrap (same idea as paced new):
+ * - First assign of the day → pick up to pacing.reviewsToday (carryover first).
+ * - Once assigned → keep that set; finishing one does NOT pull the next.
+ * - May trim unchecked if cap lowered; never grow mid-day. Use + Extra review for more.
+ */
+export function refreshTodayReviewSlots(): void {
+  const today = todayStr()
+  const pacing = computePacing()
+  const rows = db
+    .prepare('SELECT * FROM today_assignments WHERE assignment_date = ?')
+    .all(today) as TodayAssignment[]
+
+  const reviewRows = rows.filter((r) => r.kind === 'review')
+  const pacedReviews = reviewRows.filter((r) => r.is_extra !== 1)
+  const cap = Math.max(pacing.reviewsToday, 0)
+
+  if (isBootstrapActive()) {
+    if (pacedReviews.length > 0) {
+      if (pacedReviews.length > cap) {
+        const keepIds = new Set(pacedReviews.slice(0, cap).map((r) => r.id))
+        const excess = pacedReviews.filter((r) => !keepIds.has(r.id) && r.checked === 0)
+        if (excess.length > 0) {
+          const tx = db.transaction(() => {
+            for (const r of excess) deleteAssignmentById.run(r.id)
+          })
+          tx()
+        }
+      }
+      return
+    }
+
+    if (cap <= 0) return
+
+    const due = dueReviewsForToday(today)
+    const picks = pickReviewsWithCarryover(due, cap)
+    const tx = db.transaction(() => {
+      picks.forEach((p, i) => insertAssignment.run(today, p.id, 'review', i))
+    })
+    tx()
+    return
+  }
+
   if (todayAssignmentCounts().reviews === 0) {
     assignReviewsForToday()
   }
-  refreshTodayNewSlots()
 }
 
 function assignReviewsForToday(): void {

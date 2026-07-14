@@ -119,7 +119,12 @@ export function getSnapshot(): Snapshot {
   if (cache) return cache
 
   const problems = db
-    .prepare('SELECT * FROM problems ORDER BY neetcode_order, id')
+    .prepare(
+      `SELECT p.*,
+        (SELECT COUNT(*) FROM review_log rl WHERE rl.problem_id = p.id) AS review_count
+       FROM problems p
+       ORDER BY p.neetcode_order, p.id`,
+    )
     .all() as Problem[]
 
   const custom = problems.filter((p) => p.is_custom === 1)

@@ -8,6 +8,7 @@ import {
   addProblem,
 } from '../lib/dataStore'
 import ProblemRow from '../components/ProblemRow'
+import ProblemListHeader from '../components/ProblemListHeader'
 import RatingModal from '../components/RatingModal'
 import AddEditProblemModal from '../components/AddEditProblemModal'
 import { TOPICS, topicColor } from '../lib/topics'
@@ -126,6 +127,7 @@ export default function Problems() {
         {keptByTopic.length === 0 && (
           <p className="text-sm text-gray-500">No matches.</p>
         )}
+        {keptByTopic.length > 0 && <ProblemListHeader />}
         <div className="space-y-4">
           {keptByTopic.map(([topic, list]) => (
             <div key={topic}>

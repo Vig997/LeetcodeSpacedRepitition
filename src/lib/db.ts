@@ -3,8 +3,11 @@ import path from 'node:path'
 import fs from 'node:fs'
 import os from 'node:os'
 import proc from 'node:process'
+import { addDays, dateOnly, localDayFromISO, todayStr } from './dates'
+import { capIntervalDays, computeNextReviewAt } from './reviewSchedule'
+import type { Problem, Rating } from './types'
 
-const SCHEMA_VERSION = 3
+const SCHEMA_VERSION = 6
 
 const appData =
   proc.env.APPDATA ?? path.join(os.homedir(), 'AppData', 'Roaming')
@@ -188,12 +191,244 @@ function migrateSchema(): void {
     current = Math.max(current, 3)
   }
 
+  const repaired = db
+    .prepare("SELECT value FROM settings WHERE key = 'repaired_problem_dates_v4'")
+    .get() as { value: string } | undefined
+
+  if (repaired?.value !== '1') {
+    repairCorruptedProblemDates()
+    db.prepare(
+      "INSERT INTO settings (key, value) VALUES ('repaired_problem_dates_v4', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    ).run()
+    current = Math.max(current, 4)
+  }
+
+  const runaway = db
+    .prepare("SELECT value FROM settings WHERE key = 'repaired_runaway_reviews_v5'")
+    .get() as { value: string } | undefined
+
+  if (runaway?.value !== '1') {
+    repairRunawayReviewData()
+    db.prepare(
+      "INSERT INTO settings (key, value) VALUES ('repaired_runaway_reviews_v5', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    ).run()
+    current = Math.max(current, 5)
+  }
+
+  const resync = db
+    .prepare("SELECT value FROM settings WHERE key = 'resynced_next_review_v6'")
+    .get() as { value: string } | undefined
+
+  if (resync?.value !== '1') {
+    resyncAllNextReviewDates()
+    db.prepare(
+      "INSERT INTO settings (key, value) VALUES ('resynced_next_review_v6', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    ).run()
+    current = Math.max(current, 6)
+  }
+
   current = Math.max(current, SCHEMA_VERSION)
 
   if (!row || Number(row.value) !== SCHEMA_VERSION) {
     db.prepare(
       "INSERT INTO settings (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
     ).run(String(SCHEMA_VERSION))
+  }
+}
+
+/** Fix invalid next_review_at values and align repetitions with review_log. */
+function repairCorruptedProblemDates(): void {
+  const countLogs = db.prepare('SELECT COUNT(*) AS c FROM review_log WHERE problem_id = ?')
+  const update = db.prepare(`
+    UPDATE problems
+    SET first_completed_at = ?, last_reviewed_at = ?, next_review_at = ?, repetitions = ?
+    WHERE id = ?
+  `)
+
+  const problems = db.prepare('SELECT * FROM problems').all() as Problem[]
+  const today = todayStr()
+
+  for (const p of problems) {
+    const logCount = (countLogs.get(p.id) as { c: number }).c
+    const first = dateOnly(p.first_completed_at)
+    const last = dateOnly(p.last_reviewed_at)
+    let next = dateOnly(p.next_review_at)
+
+    if (!next) {
+      const base = last ?? first ?? today
+      const span = capInterval(Number.isFinite(p.interval_days) ? p.interval_days : 1)
+      next = addDays(base, span)
+    }
+
+    let reps = p.repetitions
+    if (logCount > 0) {
+      if (reps > logCount || reps < 1 || !Number.isFinite(reps)) reps = logCount
+    } else if (!Number.isFinite(reps) || reps < 0) {
+      reps = 0
+    }
+
+    const changed =
+      first !== dateOnly(p.first_completed_at) ||
+      last !== dateOnly(p.last_reviewed_at) ||
+      next !== dateOnly(p.next_review_at) ||
+      reps !== p.repetitions
+
+    if (changed) {
+      update.run(first, last, next, reps, p.id)
+    }
+  }
+}
+
+interface ReviewLogRow {
+  id: number
+  problem_id: number
+  reviewed_at: string
+  rating: Rating
+  hints: number
+  interval_after: number
+}
+
+function capInterval(interval: number): number {
+  return capIntervalDays(interval)
+}
+
+function getNumberSettingLocal(key: string, fallback: number): number {
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as
+    | { value: string }
+    | undefined
+  if (!row?.value) return fallback
+  const n = Number(row.value)
+  return Number.isFinite(n) ? n : fallback
+}
+
+function bootstrapDeferralDays(p: Problem, lastReviewDay: string): number {
+  const bootstrapActive =
+    (db.prepare("SELECT value FROM settings WHERE key = 'bootstrap_active'").get() as
+      | { value: string }
+      | undefined)?.value === '1'
+
+  if (bootstrapActive && p.status !== 'bootstrap') {
+    return getNumberSettingLocal('bootstrap_total_days', 0)
+  }
+
+  const completedOn = (
+    db.prepare("SELECT value FROM settings WHERE key = 'bootstrap_completed_on'").get() as
+      | { value: string }
+      | undefined
+  )?.value
+  const lastTotal = getNumberSettingLocal('bootstrap_last_total_days', 0)
+  if (completedOn && lastTotal > 0 && lastReviewDay <= completedOn) {
+    return lastTotal
+  }
+
+  return 0
+}
+
+function resyncAllNextReviewDates(): void {
+  const update = db.prepare(`
+    UPDATE problems SET next_review_at = ?, interval_days = ? WHERE id = ?
+  `)
+
+  const problems = db
+    .prepare('SELECT * FROM problems WHERE is_excluded = 0 AND first_completed_at IS NOT NULL')
+    .all() as Problem[]
+
+  for (const p of problems) {
+    const logs = db
+      .prepare('SELECT * FROM review_log WHERE problem_id = ? ORDER BY id')
+      .all(p.id) as ReviewLogRow[]
+
+    if (p.status === 'bootstrap' && logs.length === 0) {
+      const stagger = dateOnly(p.next_review_at)
+      if (!stagger) update.run(todayStr(), p.interval_days, p.id)
+      continue
+    }
+
+    if (logs.length === 0) continue
+
+    const last = logs[logs.length - 1]!
+    const lastDay = localDayFromISO(last.reviewed_at)
+    const sr = capInterval(last.interval_after)
+    const deferral = bootstrapDeferralDays(p, lastDay)
+    const next = computeNextReviewAt(lastDay, sr, p.id, deferral)
+
+    if (dateOnly(p.next_review_at) !== next || p.interval_days !== sr) {
+      update.run(next, sr, p.id)
+    }
+  }
+}
+
+function masteredFromLogs(logs: ReviewLogRow[], interval: number): boolean {
+  if (interval < 21 || logs.length < 2) return false
+  const last2 = logs.slice(-2)
+  return last2.every(
+    (r) => (r.rating === 'medium' || r.rating === 'easy') && r.hints <= 1,
+  )
+}
+
+/** Collapse accidental same-day double-ratings and rebuild SR fields from review_log. */
+function repairRunawayReviewData(): void {
+  const logs = db
+    .prepare('SELECT * FROM review_log ORDER BY problem_id, id')
+    .all() as ReviewLogRow[]
+
+  const byProblemDay = new Map<string, ReviewLogRow[]>()
+  for (const row of logs) {
+    const day = localDayFromISO(row.reviewed_at)
+    const key = `${row.problem_id}:${day}`
+    const arr = byProblemDay.get(key) ?? []
+    arr.push(row)
+    byProblemDay.set(key, arr)
+  }
+
+  const deleteLog = db.prepare('DELETE FROM review_log WHERE id = ?')
+  for (const [, dayLogs] of byProblemDay) {
+    if (dayLogs.length <= 1) continue
+    for (let i = 1; i < dayLogs.length; i++) {
+      deleteLog.run(dayLogs[i]!.id)
+    }
+  }
+
+  const updateProblem = db.prepare(`
+    UPDATE problems
+    SET status = ?, first_completed_at = ?, last_reviewed_at = ?, next_review_at = ?,
+      last_rating = ?, last_hints = ?, interval_days = ?, repetitions = ?
+    WHERE id = ?
+  `)
+
+  const problems = db
+    .prepare('SELECT id FROM problems WHERE first_completed_at IS NOT NULL')
+    .all() as { id: number }[]
+
+  for (const { id } of problems) {
+    const remaining = db
+      .prepare('SELECT * FROM review_log WHERE problem_id = ? ORDER BY id')
+      .all(id) as ReviewLogRow[]
+    if (remaining.length === 0) continue
+
+    const first = remaining[0]!
+    const last = remaining[remaining.length - 1]!
+    const firstDay = localDayFromISO(first.reviewed_at)
+    const lastDay = localDayFromISO(last.reviewed_at)
+    const interval = capInterval(last.interval_after)
+    const deferral = bootstrapDeferralDays(
+      db.prepare('SELECT * FROM problems WHERE id = ?').get(id) as Problem,
+      lastDay,
+    )
+    const next = computeNextReviewAt(lastDay, interval, id, deferral)
+    const mastered = masteredFromLogs(remaining, interval)
+
+    updateProblem.run(
+      mastered ? 'mastered' : 'sr',
+      firstDay,
+      lastDay,
+      next,
+      last.rating,
+      last.hints,
+      interval,
+      remaining.length,
+      id,
+    )
   }
 }
 

@@ -23,6 +23,8 @@ export interface Problem {
   ease: number
   interval_days: number
   repetitions: number
+  /** Times rated (from review_log); for display only. */
+  review_count?: number
   notes: string | null
 }
 

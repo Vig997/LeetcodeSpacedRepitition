@@ -180,7 +180,7 @@ assert(snap.pacing.doneKept === 43, 'seeded 43 done')
   for (const col of ['session_rating', 'session_hints', 'before_json', 'is_extra']) {
     assert(names.has(col), `schema missing today_assignments.${col}`)
   }
-  assert(getSetting('schema_version') === '3', `schema_version=${getSetting('schema_version')}, want 3`)
+  assert(getSetting('schema_version') === '6', `schema_version=${getSetting('schema_version')}, want 6`)
   console.log('  schema v3 columns ok')
 }
 
@@ -1358,7 +1358,7 @@ function assertAdviceInvariants(advice: PaceAdvice, label: string): void {
   checkInvariants('first_completed_at preservation')
 }
 
-// Bootstrap carryover: 5/day, 4 checked day 1 → day 2 has 6 review slots
+// Bootstrap carryover: 5/day cap — yesterday's open slot fills one of today's 5, not cap+1
 {
   cancelBootstrap()
   const carryIds = getSnapshot().bootstrapCandidates.slice(0, 10).map((p) => p.id)
@@ -1374,9 +1374,14 @@ function assertAdviceInvariants(advice: PaceAdvice, label: string): void {
   advanceDays(1)
   snap = getSnapshot()
   assert(snap.pacing.unusedReviewsYesterday === 1, 'one unchecked review carries over')
-  assert(snap.pacing.reviewsToday === cap + 1, `day2 reviewsToday=${snap.pacing.reviewsToday}, want ${cap + 1}`)
-  const day2Reviews = snap.assignments.filter((a) => a.kind === 'review')
-  assert(day2Reviews.length === cap + 1, `day2 review slots=${day2Reviews.length}, want ${cap + 1}`)
+  assert(snap.pacing.reviewsToday === cap, `day2 reviewsToday=${snap.pacing.reviewsToday}, want ${cap} (not cap+1)`)
+  const day2Reviews = snap.assignments.filter((a) => a.kind === 'review' && a.is_extra === 0)
+  assert(day2Reviews.length === cap, `day2 paced review slots=${day2Reviews.length}, want ${cap}`)
+  const carriedSlug = day1[cap - 1]!.problem.slug
+  assert(
+    day2Reviews.some((a) => a.problem.slug === carriedSlug),
+    'unchecked review from yesterday still on Today',
+  )
   cancelBootstrap()
   checkInvariants('bootstrap carryover')
 }

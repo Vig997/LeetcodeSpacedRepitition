@@ -4,7 +4,6 @@ import path from 'node:path'
 import fs from 'node:fs'
 import os from 'node:os'
 import { fileURLToPath } from 'node:url'
-
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // Faster cold start: skip Chromium logging we don't need.

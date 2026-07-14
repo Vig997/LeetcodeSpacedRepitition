@@ -1,13 +1,11 @@
 import type { GoalReachability, PacingResult } from '../lib/pacing'
 import type { PaceAdvice } from '../lib/paceAdvice'
 import { settingLabel } from '../lib/paceAdvice'
-import type { TodayLoadSummary } from '../lib/todayAssignments'
 
 interface Props {
   goal: GoalReachability
   pacing: PacingResult
   advice: PaceAdvice
-  todayLoad: TodayLoadSummary
 }
 
 type Tone = 'ok' | 'warn' | 'bad' | 'bootstrap'
@@ -93,12 +91,10 @@ function headline(
 function BootstrapHeader({
   goal,
   pacing,
-  todayLoad,
   styles,
 }: {
   goal: GoalReachability
   pacing: PacingResult
-  todayLoad: TodayLoadSummary
   styles: (typeof TONE)[Tone]
 }) {
   const progressPct =
@@ -106,7 +102,6 @@ function BootstrapHeader({
       ? Math.round((pacing.bootstrapBaselineDone / pacing.bootstrapPoolTotal) * 100)
       : 0
   const onTrack = goal.onTrack
-  const neededNew = Math.ceil(goal.neededNewPerDay)
 
   return (
     <>
@@ -150,54 +145,11 @@ function BootstrapHeader({
           </div>
         </div>
       )}
-
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <div className="rounded-lg border border-sky-800/40 bg-sky-950/50 px-3 py-2.5">
-          <div className="mb-2 text-[10px] font-semibold tracking-wide text-sky-400 uppercase">
-            Right Now
-          </div>
-          <div className="flex gap-6">
-            <div>
-              <div className="text-lg font-semibold text-gray-100">{todayLoad.reviewCount}</div>
-              <div className="text-[10px] text-gray-500">Reviews Today</div>
-            </div>
-            <div>
-              <div className="text-lg font-semibold text-gray-100">{todayLoad.newCount}</div>
-              <div className="text-[10px] text-gray-500">
-                New{pacing.bootstrapNewPerDay > 0 ? ` · ${pacing.bootstrapNewPerDay}/Day` : ''}
-              </div>
-            </div>
-          </div>
-        </div>
-        <div className="rounded-lg border border-gray-800/60 bg-gray-950/40 px-3 py-2.5">
-          <div className="mb-2 text-[10px] font-semibold tracking-wide text-gray-500 uppercase">
-            After Bootstrap
-          </div>
-          {goal.remainingUndone > 0 ? (
-            <div className="flex gap-6">
-              <div>
-                <div className="text-lg font-semibold text-gray-100">{goal.remainingUndone}</div>
-                <div className="text-[10px] text-gray-500">Undone Kept</div>
-              </div>
-              <div>
-                <div className="text-lg font-semibold text-gray-100">{goal.daysLeftAfterBootstrap}</div>
-                <div className="text-[10px] text-gray-500">Days To Goal</div>
-              </div>
-              <div>
-                <div className="text-lg font-semibold text-gray-100">~{neededNew}</div>
-                <div className="text-[10px] text-gray-500">New/Day Needed</div>
-              </div>
-            </div>
-          ) : (
-            <p className="text-sm text-gray-400">All Kept Problems Done</p>
-          )}
-        </div>
-      </div>
     </>
   )
 }
 
-export default function PaceOverview({ goal, pacing, advice, todayLoad }: Props) {
+export default function PaceOverview({ goal, pacing, advice }: Props) {
   const styles = TONE[pacing.bootstrapActive ? 'bootstrap' : headline(goal, advice, pacing).tone]
   const { title, subtitle } = headline(goal, advice, pacing)
 
@@ -211,7 +163,7 @@ export default function PaceOverview({ goal, pacing, advice, todayLoad }: Props)
   return (
     <div className={`rounded-xl border px-4 py-4 ${styles.border} ${styles.bg}`}>
       {pacing.bootstrapActive ? (
-        <BootstrapHeader goal={goal} pacing={pacing} todayLoad={todayLoad} styles={styles} />
+        <BootstrapHeader goal={goal} pacing={pacing} styles={styles} />
       ) : (
         <>
           <div className={`text-sm font-semibold ${styles.title}`}>{title}</div>

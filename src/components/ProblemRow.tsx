@@ -47,14 +47,16 @@ export default function ProblemRow({
       <DifficultyBadge difficulty={p.difficulty} />
       <TopicBadge topic={p.topic} />
       <span className="hidden w-24 text-right text-xs text-gray-500 lg:inline">
-        {done && !removed && p.first_completed_at ? formatDisplayDate(p.first_completed_at) : ''}
+        {done && !removed && p.first_completed_at
+          ? formatDisplayDate(p.first_completed_at)
+          : ''}
       </span>
-      <span className="hidden w-24 text-right text-xs text-gray-500 lg:inline">
+      <span className="hidden w-28 text-right text-xs text-gray-500 lg:inline">
         {done && !removed ? (
           <>
-            {p.last_reviewed_at ?? '—'}
-            {p.repetitions > 0 && (
-              <span className="ml-1 text-gray-600">· {p.repetitions}×</span>
+            {formatDisplayDate(p.last_reviewed_at)}
+            {p.review_count != null && p.review_count > 0 && (
+              <span className="ml-1 text-gray-600">· {p.review_count}×</span>
             )}
           </>
         ) : (
@@ -62,7 +64,7 @@ export default function ProblemRow({
         )}
       </span>
       <span className="hidden w-24 text-right text-xs text-gray-500 lg:inline">
-        {done && !removed ? (p.next_review_at ?? '—') : ''}
+        {done && !removed ? formatDisplayDate(p.next_review_at) : ''}
       </span>
       {removed ? (
         <button
